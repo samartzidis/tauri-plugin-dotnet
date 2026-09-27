@@ -431,35 +431,6 @@ public sealed class Backend : IBridgeBackend
 
 The bridge then logs each service it registers and every exception a service method throws, with its stack trace (line numbers need the `.pdb` next to the dll, as in a Debug build). With this backend, both `tauri dev` and an installed NSIS build wrote `%LOCALAPPDATA%\MyApp\logs\backend-<date>.log` and printed nothing to the console. Checked on Windows only.
 
-### Debugging C#
-
-Both hosts run the backend from a private copy of your build output (see [Development: the backend is loaded from a copy](#development-the-backend-is-loaded-from-a-copy)), with the `.pdb` copied alongside it, so the debugger finds your source files through the paths recorded there and breakpoints in your project's files bind as usual either way.
-
-**With the default dev-only sidecar host** (`backend!`/`any_backend_host!` in a debug build): the backend runs in its own `dotnet` process, separate from the Tauri app, so attach a .NET debugger to that process instead of to `myapp.exe` - look for the `dotnet` process whose command line runs `Tauri.Plugin.DotNet.SidecarHost.dll` (several `dotnet.exe` processes can be running at once, so match on the command line, not just the name). A restart after a rebuild is a new process, so the debugger has to attach again. This has not been verified with a real debugger yet.
-
-**With a manually constructed `HostfxrHost`** (bypassing the sidecar): the backend runs inside the Tauri process itself, so attach to the app (`myapp.exe` while `tauri dev` runs). A breakpoint in a service method is hit when the webview calls it, and detaching leaves the app running. A relaunch after a rebuild is a new process, so the debugger has to attach again.
-
-Verified with [netcoredbg](https://github.com/Samsung/netcoredbg) 3.2.0 against `HostfxrHost` running from that copy: it attached to the running app, stopped at a breakpoint in `BackendService.Greet` when the webview called it, showed the parameter and locals, and after `continue` the call returned normally. Not tried with VS Code, Visual Studio or Rider, the sidecar host, nor with a Release or [embedded](#optional-embed-the-backend-in-the-executable) backend (Release code is optimised, so locals may be missing). In VS Code, an attach configuration for the `HostfxrHost` case would look like this (not tried):
-
-```json
-{ "name": "Attach to the Tauri app", "type": "coreclr", "request": "attach", "processName": "myapp.exe" }
-```
-
-**Startup code** (your `IBridgeBackend` constructor and `Configure`) has already run by the time you can attach. To debug it, make the backend wait for a debugger:
-
-```csharp
-public void Configure(BridgeDispatcher dispatcher)
-{
-    if (Environment.GetEnvironmentVariable("MYAPP_WAIT_FOR_DEBUGGER") == "1")
-        while (!System.Diagnostics.Debugger.IsAttached)
-            Thread.Sleep(100);
-
-    dispatcher.RegisterService(new GreetService());   // set a breakpoint here
-}
-```
-
-Start the app with that variable set, attach, and it continues into your breakpoint. This was checked with netcoredbg: the app stayed blocked until the attach, then stopped at the breakpoint and ran normally afterwards. The window is already open while the backend waits.
-
 ## Shipping your app
 
 `tauri build` does not know about the .NET backend, so you have to get it into the package. There are two ways, matching the [path and embedded modes](#hosting-net-runs-inside-the-tauri-process) above.
@@ -483,7 +454,7 @@ This is the embedded mode. If your backend has only managed dependencies and you
 - **One runtime per process, and no isolation.** A crash or stack overflow in C# takes the app down with it.
 - **Windows only so far.** The runtime discovery has Linux and macOS paths, but none of it has been run there.
 - **Release bundling is manual.** You add the `bundle.resources` entry yourself (see [Shipping your app](#shipping-your-app)); nothing configures it for you. Only Windows installers have been tried.
-- **A C# change restarts the sidecar process, not the backend in-process.** There is no in-process hot reload; a call made mid-restart rejects with `HostRestarting` and can be retried (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+- **A C# rebuild restarts the sidecar process, not the backend in-process.** There is no in-process hot reload; a call made mid-restart rejects with `HostRestarting` and can be retried (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
 - The dispatcher uses reflection, so backends cannot be NativeAOT-compiled.
 
 ## Sample app
