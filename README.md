@@ -1,8 +1,10 @@
 # tauri-plugin-dotnet
 
+![alt text](docs/image.png =483x)
+
 Write your Tauri app's backend in .NET. Mark C# classes with `[BridgeService]`, run `dotnet build`, and call them from TypeScript through generated, fully typed bindings, with your frontend still running inside Tauri and using its plugins, bundler and updater.
 
-> This is a community plugin. It is not officially approved by or affiliated with Tauri. TAURI is a trademark of The Tauri Programme within the Commons Conservancy.
+> This is a community plugin. It is not officially approved by or affiliated with Tauri.
 
 ## Requirements
 
@@ -150,7 +152,7 @@ Arguments, results and event payloads travel as JSON (`System.Text.Json`, camelC
 |`KeyValuePair<K, V>`|`{ key: K; value: V }`|
 |tuples, `(int, string)` or `Tuple<int, string>`|`[number, string]`|
 |`JsonElement`, `JsonNode` (any JSON)|`unknown`|
-|`T?`|`T | null` (an optional `prop?: T` in a model)|
+|`T?`|\`T|
 |enums|a numeric TypeScript `enum`; with `JsonStringEnumConverter`, a string enum (see Converters below)|
 |classes and records from your own assemblies|an `interface`; a base class becomes `extends`|
 |generic classes such as `Page<T>`|`interface Page<T>`, used as `Page<Person>`|

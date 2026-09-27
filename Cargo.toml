@@ -10,7 +10,7 @@ repository = "https://github.com/samartzidis/tauri-plugin-dotnet"
 readme = "README.md"
 keywords = ["tauri", "dotnet", "csharp", "plugin", "rpc"]
 categories = ["gui"]
-exclude = ["/dotnet", "/samples", "/examples", "/dist-js", "/guest-js", "/node_modules"]
+exclude = ["/dotnet", "/samples", "/examples", "/dist-js", "/guest-js", "/node_modules", "/.memory", "/.vscode", "/scripts", "CLAUDE.md", "*.code-workspace"]
 links = "tauri-plugin-dotnet"
 
 [dependencies]

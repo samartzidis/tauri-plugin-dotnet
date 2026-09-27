@@ -26,6 +26,9 @@ samples/*/src/bindings/
 # Publishable build output (nupkg, crate) collected by CI/release targets
 /artifacts
 
+# Scratch clone made by update-public-repo.ps1
+/.tauri-plugin-dotnet-export
+
 # Tauri
 /.tauri
 
