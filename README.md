@@ -477,18 +477,6 @@ npm run build
 cd src-tauri && cargo run --features custom-protocol
 ```
 
-## Development
-
-```shell
-# Rust plugin
-cargo test
-
-# .NET (dispatcher, generator)
-dotnet test dotnet/Tauri.Plugin.DotNet.slnx
-```
-
-See [Requirements](#requirements) for the toolchain.
-
 ## License
 
 MIT
