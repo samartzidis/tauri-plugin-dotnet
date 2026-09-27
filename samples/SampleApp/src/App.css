@@ -1,0 +1,136 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.app-logo {
+  width: 128px;
+  margin-top: 1rem;
+}
+
+h1 {
+  font-size: 2.5em;
+  line-height: 1.1;
+  margin-bottom: 0.25rem;
+}
+
+.description {
+  color: #888;
+  max-width: 480px;
+}
+
+.error {
+  background: rgba(255, 50, 50, 0.1);
+  border-left: 3px solid #f33;
+  color: #f33;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  width: 100%;
+  text-align: left;
+  font-size: 0.9em;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.primary-btn {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.5em 1.2em;
+  font-size: 0.9em;
+  font-weight: 500;
+  font-family: "Consolas", "Fira Code", monospace;
+  background-color: #646cff;
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 0.25s;
+}
+
+.primary-btn:hover {
+  background-color: #535bf2;
+}
+
+.primary-btn:focus,
+.primary-btn:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+.test-btn {
+  border-radius: 8px;
+  border: 1px solid #646cff;
+  padding: 0.5em 1.2em;
+  font-size: 0.9em;
+  font-weight: 500;
+  font-family: "Consolas", "Fira Code", monospace;
+  background-color: transparent;
+  color: #646cff;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.test-btn:hover {
+  background-color: rgba(100, 108, 255, 0.1);
+}
+
+.cancel-btn {
+  border-color: #e53e3e;
+  color: #e53e3e;
+}
+
+.cancel-btn:hover {
+  background-color: rgba(229, 62, 62, 0.1);
+}
+
+.section-title {
+  font-size: 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin-top: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.results {
+  margin-top: 1rem;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.result-item {
+  background: rgba(100, 108, 255, 0.08);
+  border-left: 3px solid #646cff;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.95em;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.result-item ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0 0 0;
+}
+
+.result-item li {
+  padding: 0.15rem 0;
+}
+
+@media (prefers-color-scheme: light) {
+  .primary-btn {
+    background-color: #646cff;
+  }
+
+  .result-item {
+    background: rgba(100, 108, 255, 0.06);
+  }
+}

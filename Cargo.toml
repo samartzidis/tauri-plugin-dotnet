@@ -1,0 +1,39 @@
+[package]
+name = "tauri-plugin-dotnet"
+version = "0.1.0"
+authors = ["George Samartzidis"]
+description = "Tauri plugin that connects the frontend to .NET services through a typed RPC bridge."
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/samartzidis/tauri-plugin-dotnet"
+readme = "README.md"
+keywords = ["tauri", "dotnet", "csharp", "plugin", "rpc"]
+categories = ["gui"]
+exclude = ["/dotnet", "/samples", "/examples", "/dist-js", "/guest-js", "/node_modules"]
+links = "tauri-plugin-dotnet"
+
+[dependencies]
+tauri = { version = "2.8.5" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["sync", "io-util", "process", "time", "macros"] }
+log = "0.4"
+# In-process .NET hosting. Default features are off: `nethost` would download a native library at build time.
+netcorehost = { version = "0.22", default-features = false, features = ["net8_0"] }
+# The dev-only sidecar host's local socket transport (named pipe on Windows, Unix domain socket elsewhere).
+interprocess = { version = "2", default-features = false, features = ["tokio"] }
+# The dev-only sidecar host's watcher for backend rebuilds.
+notify = "7"
+
+# The dialog shown when .NET cannot be started. The same rfd setup as tauri-plugin-dialog, so an app that uses both
+# builds it once.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rfd = { version = "0.16", default-features = false, features = ["common-controls-v6", "gtk3"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.4.0", features = ["build"] }
+
+[dev-dependencies]
+# Only tests need an actual runtime to drive `#[tokio::test]`; the crate itself reuses Tauri's.
+tokio = { version = "1", features = ["rt", "macros"] }

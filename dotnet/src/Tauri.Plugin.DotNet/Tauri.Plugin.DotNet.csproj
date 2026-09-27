@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- NuGet package metadata -->
+    <PackageId>Tauri.Plugin.DotNet</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Typed RPC bridge between a Tauri frontend and .NET services, with auto-generated TypeScript bindings. Provides reflection-based method dispatch, cancellation support, and a .NET-to-JS event system.</Description>
+    <Authors>George Samartzidis</Authors>
+    <PackageTags>tauri;dotnet;bridge;typescript;bindings;rpc</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/samartzidis/tauri-plugin-dotnet</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Tauri.Plugin.DotNet.Tests" />
+    <InternalsVisibleTo Include="Tauri.Plugin.DotNet.SidecarHost" />
+  </ItemGroup>
+
+  <!-- Pack the MSBuild .props and .targets files (auto-imported by NuGet consumers) -->
+  <ItemGroup>
+    <None Include="build\Tauri.Plugin.DotNet.props" Pack="true" PackagePath="build\" />
+    <None Include="build\Tauri.Plugin.DotNet.targets" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
+  <!-- Pack the TypeScript bridge runtime -->
+  <ItemGroup>
+    <None Include="content\bridge\runtime.ts" Pack="true" PackagePath="content\bridge\" />
+  </ItemGroup>
+
+  <!--
+    When packing, publish the generator tool and include it in the package.
+    The generator is invoked by Tauri.Plugin.DotNet.targets at consumer build time.
+    The folder name below is the generator's own target framework (Generator.csproj), not the consumer's.
+    Keep it in sync with _TauriDotNetToolTfm in build\Tauri.Plugin.DotNet.targets.
+  -->
+  <Target Name="PublishGeneratorForPack" BeforeTargets="_GetPackageFiles" Condition="'$(NoBuild)' != 'true'">
+    <RemoveDir Directories="$(BaseIntermediateOutputPath)generator-publish" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\Tauri.Plugin.DotNet.Generator\Tauri.Plugin.DotNet.Generator.csproj&quot; -c $(Configuration) -o &quot;$(BaseIntermediateOutputPath)generator-publish&quot;" />
+    <ItemGroup>
+      <_GeneratorFiles Include="$(BaseIntermediateOutputPath)generator-publish\**\*" />
+      <None Include="@(_GeneratorFiles)" Pack="true" PackagePath="tools\net8.0\%(RecursiveDir)" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Same idea as PublishGeneratorForPack, for the dev-only sidecar-runner tool
+    (Tauri.Plugin.DotNet.SidecarHost). Published into the same tools\net8.0\ folder; its filenames
+    don't collide with the generator's.
+  -->
+  <Target Name="PublishSidecarHostForPack" BeforeTargets="_GetPackageFiles" Condition="'$(NoBuild)' != 'true'">
+    <RemoveDir Directories="$(BaseIntermediateOutputPath)sidecarhost-publish" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\Tauri.Plugin.DotNet.SidecarHost\Tauri.Plugin.DotNet.SidecarHost.csproj&quot; -c $(Configuration) -o &quot;$(BaseIntermediateOutputPath)sidecarhost-publish&quot;" />
+    <ItemGroup>
+      <_SidecarHostFiles Include="$(BaseIntermediateOutputPath)sidecarhost-publish\**\*" />
+      <None Include="@(_SidecarHostFiles)" Pack="true" PackagePath="tools\net8.0\%(RecursiveDir)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

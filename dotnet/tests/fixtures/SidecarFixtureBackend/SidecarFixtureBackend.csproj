@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      Matches what Tauri.Plugin.DotNet.props sets for a real backend project: a private copy of
+      Tauri.Plugin.DotNet.dll (and its own dependencies) next to this project's own output, and a
+      deps.json/runtimeconfig.json usable for dynamic loading - exactly what
+      Tauri.Plugin.DotNet.SidecarHost's BackendAssemblyResolver is meant to resolve against.
+    -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Tauri.Plugin.DotNet\Tauri.Plugin.DotNet.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,24 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    Tauri.Plugin.DotNet NuGet package build properties.
+    Auto-imported (before the project's own properties) when a consumer adds
+    <PackageReference Include="Tauri.Plugin.DotNet" />.
+
+    The plugin loads the backend into the Tauri process through hostfxr, which needs the backend built with:
+      - EnableDynamicLoading                 - a runtimeconfig.json and deps.json next to the assembly, and a
+                                               loadable (not executable) component
+      - GenerateRuntimeConfigurationFiles    - the runtimeconfig.json hostfxr starts the runtime from
+      - CopyLocalLockFileAssemblies          - the backend's dependencies (Tauri.Plugin.DotNet.dll and the rest)
+                                               copied next to it
+
+    These are only defaults: a value the project sets itself wins.
+  -->
+
+  <PropertyGroup>
+    <EnableDynamicLoading Condition="'$(EnableDynamicLoading)' == ''">true</EnableDynamicLoading>
+    <GenerateRuntimeConfigurationFiles Condition="'$(GenerateRuntimeConfigurationFiles)' == ''">true</GenerateRuntimeConfigurationFiles>
+    <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+</Project>

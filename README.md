@@ -1,0 +1,532 @@
+# tauri-plugin-dotnet
+
+Write your Tauri app's backend in .NET. Mark C# classes with `[BridgeService]`, run `dotnet build`, and call them from TypeScript through generated, fully typed bindings, with your frontend still running inside Tauri and using its plugins, bundler and updater.
+
+> This is a community plugin. It is not officially approved by or affiliated with Tauri. TAURI is a trademark of The Tauri Programme within the Commons Conservancy.
+
+## Requirements
+
+**On the machine that runs the app**
+
+- A **.NET 8 or newer runtime**, installed system-wide or in a `dotnet` folder next to the executable. The backend is framework-dependent and the plugin hosts the runtime inside the Tauri process. The default roll-forward policy is `Minor`, so a backend built for net8.0 needs an 8.x runtime unless you set `RollForward`.
+- WebView2 on Windows (as for any Tauri app).
+
+**On the development machine**
+
+- Rust 1.95 or newer, needed by the `netcorehost` dependency (held at 0.22).
+- The .NET SDK (8 or newer).
+- Node.
+
+## Getting started
+
+This is the whole setup, checked by following it in a new `npm create tauri-app` project (React \+ TypeScript template; the app is called `myapp`).
+
+**1. Add the Rust plugin.** In `src-tauri`, run `cargo add tauri-plugin-dotnet`. Then add one line to the builder in `src-tauri/src/lib.rs` (use the name of your own backend project instead of `MyApp.Backend`; you create it in step 2). Whatever the builder already has stays: a new Tauri project starts with `.plugin(tauri_plugin_opener::init())` and a `greet` command registered with `.invoke_handler(...)`.
+
+```rust
+tauri::Builder::default()
+    .plugin(tauri_plugin_dotnet::backend!("MyApp.Backend"))
+    // ...your existing .plugin(...) and .invoke_handler(...) calls stay here...
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
+```
+
+`backend!` finds the built backend: the project's own Debug build output in `tauri dev`, or `resource_dir()/dotnet/` (shipped by `bundle.resources`) in an installed app. In a debug build it runs the backend as a separate dev-only process, the **sidecar** mode (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)), so a rebuild never blocks on the app and never restarts it; a release build loads it inside the app itself, the **path** mode, as described in [Hosting](#hosting-net-runs-inside-the-tauri-process) (there is also an opt-in **embedded** mode, covered there too). It assumes the layout the rest of this guide sets up: a project at `../src-dotnet/MyApp.Backend/`, next to `src-tauri`, targeting net8.0, whose assembly has the same name as its folder. Two keys cover the common differences, in either order: `backend!("MyApp.Backend", assembly = "MyApp", tfm = "net9.0")`. If the build output is somewhere else (a `RuntimeIdentifier`, artifacts output or a custom `OutputPath`), build the host yourself with `tauri_plugin_dotnet::init_with(|_app| HostfxrHost::new(HostfxrOptions::new(<path to your dll>)))`.
+
+Grant the permission by adding `"dotnet:default"` to the `permissions` array in `src-tauri/capabilities/default.json` (with a comma after the entry before it).
+
+**2. Create the backend.** A class library next to `src` and `src-tauri`, targeting net8.0 (`-f net8.0`, because a newer SDK defaults to its own version):
+
+```shell
+dotnet new classlib -n MyApp.Backend -f net8.0 -o src-dotnet/MyApp.Backend
+cd src-dotnet/MyApp.Backend
+rm Class1.cs
+dotnet add package Tauri.Plugin.DotNet
+```
+
+Add exactly one `IBridgeBackend` and a service (the package's `.props` sets what loading needs, so the csproj stays as it is):
+
+```csharp
+using Tauri.Plugin.DotNet;
+
+namespace MyApp.Backend;
+
+public sealed class Backend : IBridgeBackend
+{
+    public void Configure(BridgeDispatcher dispatcher) => dispatcher.RegisterService(new GreetService());
+}
+
+[BridgeService]
+public class GreetService
+{
+    public string Greet(string name) => $"Hello, {name}! Greetings from .NET.";
+}
+```
+
+**3. Build the backend from Tauri's hooks.** In `src-tauri/tauri.conf.json`, build it before the frontend. `tauri dev` uses a Debug build in the project's own `bin` folder; `tauri build` makes a Release build into `src-tauri/backend` and ships that folder:
+
+```json
+{
+  "build": {
+    "beforeDevCommand": "dotnet build src-dotnet/MyApp.Backend && npm run dev",
+    "beforeBuildCommand": "dotnet build src-dotnet/MyApp.Backend -c Release -o src-tauri/backend && npm run build"
+  },
+  "bundle": {
+    "resources": { "backend/": "dotnet/" }
+  }
+}
+```
+
+Add `/backend/` to `src-tauri/.gitignore`: that is where the Release build goes. Tauri also requires that folder to exist whenever the app is compiled, `tauri dev` included, although `tauri dev` never writes there. You do not have to create it: the first Debug build (which `beforeDevCommand` runs before cargo) creates it, empty, when `src-tauri` is next to `src-dotnet` (`TauriDotNetResourceFolder` changes the path, `TauriDotNetSkipResourceFolder` turns it off).
+
+The same `dotnet build` copies `runtime.ts` and generates the TypeScript bindings into `src/bindings` (a fresh clone needs one `dotnet build` before `npm run build` or `cargo`, which the hooks do for you; commit the bindings or ignore them, as you prefer).
+
+Each Debug build also copies the sidecar-runner tool next to the backend dll, which the plugin uses to restart the backend on its own after a rebuild (see step 5 and [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+
+**4. Call it from the frontend.**
+
+```ts
+import { GreetService } from "./bindings";
+
+const message = await GreetService.Greet("World"); // "Hello, World! Greetings from .NET."
+```
+
+**5. Run and package.** `npm run tauri dev` runs the app; `npm run tauri build` makes the installer (see [Shipping your app](#shipping-your-app)).
+
+**Changing C# while `tauri dev` runs.** Build the backend the way you normally would: your IDE's Build, `dotnet build src-dotnet/MyApp.Backend`, or, to rebuild on every save, `dotnet watch build --project src-dotnet/MyApp.Backend` in a second terminal. Every successful build that changed the backend restarts just the .NET side on its own.
+
+- **Why it works.** In a debug build, `backend!` runs the backend as a separate process instead of inside the app (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)). The plugin watches the backend's build output itself and, once a rebuild settles, kills that process and starts a new one against the fresh dll - the app's window, its Rust process and the frontend are never touched.
+- **What you see.** The window stays open and responsive; nothing reloads. A call made while the swap is in progress rejects with `HostRestarting` and can simply be retried. The Rust side is not recompiled or restarted (unless you also changed Rust code, which still triggers Tauri's own restart as usual).
+- **Errors.** A compile error shows in the build's own output; the previous backend process keeps running and answering calls. If a rebuild succeeds but the new process fails to start, calls reject with the reason until the next successful rebuild.
+- **Several builds in a row** are fine: the plugin coalesces a burst and restarts once, against the last build.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    subgraph FE["Frontend (TypeScript)"]
+        bindings["Generated bindings<br/>GreetService.Greet()"]
+        runtime["runtime.ts<br/>on('event', cb)"]
+    end
+
+    subgraph TA["Tauri (Rust)"]
+        plugin["tauri-plugin-dotnet<br/>plugin:dotnet|call<br/>plugin:dotnet|cancel"]
+        events["dotnet:event"]
+    end
+
+    subgraph NET[".NET (same process)"]
+        dispatcher["BridgeDispatcher"]
+        services["[BridgeService] classes"]
+        emit["Emit / EmitTo"]
+    end
+
+    bindings -- "invoke" --> plugin
+    plugin -. "promise" .-> bindings
+    plugin -- "hostfxr" --> dispatcher
+    dispatcher -. "completion" .-> plugin
+    dispatcher --> services
+    emit -- "EventSink" --> events
+    events -- "event" --> runtime
+```
+- **Calls are promises.** `invoke("plugin:dotnet|call", { callId, method, args })` resolves with the .NET return value or rejects with `{ message, type }`, which the runtime turns into an `Error` whose `name` is the .NET exception type. The `callId` exists only so a call can be cancelled.
+- **Cancellation and timeouts.** `cancellableCall(...).cancel()` and per-call timeouts send `plugin:dotnet|cancel`, which triggers the `CancellationToken` a service method declares.
+- **Events.** Mark a payload class `[BridgeEvent("progress")]`, then C# calls `dispatcher.Emit(new ProgressEvent { ... })` (all webviews) or `dispatcher.EmitTo(windowLabel, new ProgressEvent { ... })`. The name comes from the attribute, so it is written once, and the generated TypeScript gets a typed `onProgress(cb)`. (`Emit(name, data)` and `EmitTo(windowLabel, name, data)` remain for ad-hoc events.) The plugin emits them as the `dotnet:event` Tauri event and `runtime.ts` fans them out to `on(name, cb)` subscribers.
+- **Call context.** A service method can declare a `CallContext` parameter to learn which webview called it (`WindowLabel`).
+- **C# calling the frontend.** When C# needs something only a webview can do, such as showing a Tauri dialog, it awaits a typed call to the frontend. See [Calling the frontend from C#](#calling-the-frontend-from-c).
+
+## Types in the bindings
+
+Arguments, results and event payloads travel as JSON (`System.Text.Json`, camelCase, `null` properties omitted), and the generator types them like this:
+
+
+|C#|TypeScript|
+|:---|:---|
+|`string`, `Guid`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `Uri`|`string`|
+|`bool`|`boolean`|
+|`byte`, `short`, `int`, `long`, `float`, `double`, `decimal` and their unsigned forms|`number`|
+|`byte[]`|`string` (base64)|
+|arrays, `List<T>`, `IEnumerable<T>` and the other list interfaces, `HashSet<T>`, `SortedSet<T>`, `ISet<T>`|`T[]`|
+|`Dictionary<K, V>` and its interfaces|`Record<K, V>`|
+|`KeyValuePair<K, V>`|`{ key: K; value: V }`|
+|tuples, `(int, string)` or `Tuple<int, string>`|`[number, string]`|
+|`JsonElement`, `JsonNode` (any JSON)|`unknown`|
+|`T?`|`T | null` (an optional `prop?: T` in a model)|
+|enums|a numeric TypeScript `enum`; with `JsonStringEnumConverter`, a string enum (see Converters below)|
+|classes and records from your own assemblies|an `interface`; a base class becomes `extends`|
+|generic classes such as `Page<T>`|`interface Page<T>`, used as `Page<Person>`|
+|anything else (`char`, `Version`, immutable collections, ...)|`unknown`|
+
+**Tuples** are sent as JSON arrays, which is how the bridge differs from plain `System.Text.Json`: it would drop the items of a `(int, string)` and send `{}`. The names of the items in `(int Id, string Name)` are not kept, so use a record when the names matter. A tuple of more than seven items is refused with an error, not sent as `{}`. An `IReadOnlySet<T>` can be returned, but not taken as a parameter, because .NET cannot read one; take a `HashSet<T>` or `ISet<T>` instead.
+
+**Converters.** A `[JsonConverter]` changes the JSON, so the generator follows it where it can. `[JsonConverter(typeof(JsonStringEnumConverter))]` on an enum makes it a string enum (`Low = "Low"`). On a property it types that property as a union of the member names (`"Low" | "High"`), and the same enum stays numeric everywhere else. A `[Flags]` enum written that way is a `string`, because the value is the names joined with `", "` (`"Read, Write"`). Only that parameterless converter is understood. With any other converter, including a subclass that sets a naming policy, the generator cannot know what the JSON looks like, so it types the type or property as `unknown` and prints a build warning (`TAURIDOTNET010`); check or cast the value where you use it. The bridge's own JSON options are fixed, so a converter can only be applied by attribute.
+
+**Method names are unique.** A call names its method, ignoring case, so a service cannot have two methods with the same name: overloads, or `Baz` and `baz`. Registering such a service fails at startup, and the binding generator fails the build (`TAURIDOTNET011`) with the names of the methods involved. Rename them, or hide all but one with `[BridgeIgnore]`.
+
+**Large numbers.** A JavaScript number holds integers exactly only up to 2\^53 - 1 (9007199254740991) and about 15 significant digits, the same limit Tauri's own commands have for `u64` and `i64`. A `long`, `ulong` or `decimal` beyond that reaches the frontend rounded, and the same happens to a number the frontend sends. To keep the digits exact, write the value as a string, with `System.Text.Json`'s own attribute on the property (or on the class, for all its properties):
+
+```csharp
+public class Account
+{
+    [JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)]
+    public long Id { get; set; }        // id: string in TypeScript
+}
+```
+
+The bindings then type that property as `string` (or `string[]`, `Record<string, string>` for a collection of numbers), and it can be sent back as a string. Use both flags: with only `WriteAsString`, .NET would refuse the string when it comes back. `AllowReadingFromString` alone changes nothing that is written, so the property stays a `number`. The attribute works on model and event properties only; a method's own parameters and result are always plain numbers, so return a small model, or a `string`, for a big value.
+
+## Calling the frontend from C#
+
+Services let the frontend call C#. To go the other way, declare an interface of what the frontend can do:
+
+```csharp
+[BridgeFrontend]
+public interface IFrontend
+{
+    Task<string?> PickFile(string title, CancellationToken cancellationToken);
+}
+```
+
+`dotnet build` generates a typed TypeScript interface and an `implementFrontend` function. Implement it once at startup, using any Tauri JS API (here the dialog plugin):
+
+```ts
+implementFrontend({
+  PickFile: async (title) => (await open({ title, multiple: false })) ?? null,
+});
+```
+
+C# then awaits it from any code, on any thread, with the label of the window to ask (`CallContext.WindowLabel` is the caller's):
+
+```csharp
+var path = await dispatcher.GetFrontend<IFrontend>(windowLabel).PickFile("Choose a file", ct);
+```
+
+- **Errors:** an exception thrown in the frontend becomes a `FrontendException` whose `ErrorType` is the JavaScript error's name. No answer within two minutes throws a `TimeoutException` (change it with `GetFrontend<T>(label, timeout)`). A `CancellationToken` parameter cancels the wait and is not sent.
+- **Nullability:** `string?` and `Task<string?>` become `string | null` in TypeScript, for these interfaces and for services.
+- **Rules:** the interface must be public, with methods returning `Task` or `Task<T>`, unique names, and no properties. `GetFrontend` checks this and says what is wrong.
+- **Registration:** the window must have called `implementFrontend` before the call; a request that arrives earlier is not replayed. A window that never registers anything does not listen at all, so a call to it ends in the timeout. Only the window that was asked can answer.
+- **Upgrading:** the build refreshes `src/bindings/runtime.ts` whenever the package's copy differs, so upgrading the package needs nothing extra and the generated files (`frontends.ts` needs the current runtime) always match it. Do not edit that file.
+
+## Hosting: .NET runs inside the Tauri process
+
+`HostfxrHost` loads the .NET runtime into the app through `hostfxr` and calls `[UnmanagedCallersOnly]` entry points in `Tauri.Plugin.DotNet.Hosting.NativeHost`. Only pointers and lengths cross the boundary; each side copies what it receives, so neither frees the other's memory. Calls return immediately and complete through a callback, so a slow C# method never blocks Tauri's threads.
+
+The backend runs one of three ways. `backend!`/`any_backend_host!` pick between the first two automatically, by build profile; embedding is always opt-in.
+
+
+|Mode|Process|Loaded from|When|
+|:---|:---|:---|:---|
+|**Sidecar**|separate `dotnet` process|a shadow copy of the build output|debug builds (`tauri dev`) — see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)|
+|**Path**|inside the Tauri process|a folder next to the app|release builds, by default|
+|**Embedded**|inside the Tauri process|bytes baked into the executable|opt-in — see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)|
+
+The rest of this section covers path and embedded hosting, since `HostfxrHost` runs both in-process; the sidecar runs its own process and is covered separately below.
+
+**Backend project (C#)**: a class library that references `Tauri.Plugin.DotNet` and has exactly one `IBridgeBackend`:
+
+```xml
+<PropertyGroup>
+  <TargetFramework>net8.0</TargetFramework>
+</PropertyGroup>
+<ItemGroup>
+  <PackageReference Include="Tauri.Plugin.DotNet" Version="0.1.0" />
+</ItemGroup>
+```
+
+The package's `.props` file sets `EnableDynamicLoading`, `GenerateRuntimeConfigurationFiles` and `CopyLocalLockFileAssemblies` to `true`, so the runtime config, the dependency list and the dependencies (including `Tauri.Plugin.DotNet.dll`) land next to your assembly, which is what the host loads. They are only defaults: a value your project sets wins, but turning one off breaks loading.
+
+```csharp
+public sealed class Backend : IBridgeBackend
+{
+    public void Configure(BridgeDispatcher dispatcher) =>
+        dispatcher.RegisterService(new GreetService());
+}
+```
+
+**Logging (optional)**: the bridge logs registered services, cancelled calls and exceptions thrown by service methods, but only if the backend supplies a logger factory. Override `LoggerFactory` (it is read before `Configure`, so your services can share it):
+
+```csharp
+public ILoggerFactory? LoggerFactory { get; } =
+    Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug));
+```
+
+The default is no logging. A console logger only shows up when the app was started from a console (Windows release builds have none); for a file, see [Debugging and logs](#debugging-and-logs).
+
+**Tauri app (Rust)**: register the plugin with a host pointing at the built backend. `backend!` does this for the layout in [Getting started](#getting-started); otherwise `init_with` builds the host when the plugin starts, with the app handle at hand:
+
+```rust
+use tauri_plugin_dotnet::{HostfxrHost, HostfxrOptions};
+
+tauri::Builder::default()
+    .plugin(tauri_plugin_dotnet::init_with(|_app| {
+        HostfxrHost::new(HostfxrOptions::new("path/to/MyApp.Backend.dll"))
+    }))
+```
+
+A host that needs nothing from the app can also be passed directly: `tauri_plugin_dotnet::Builder::new().host(host).build()`.
+
+and grant `dotnet:default` in a capability.
+
+**When .NET cannot be started**, the error is logged, an error dialog tells the user, and the app ends (exit code 1) before its windows are used, in debug and release builds alike. If the .NET runtime the backend needs is not installed, the dialog names it (for example ".NET Runtime 8.0 (x64)", read from the backend's `runtimeconfig.json`). Any other failure (backend not found, mismatched versions, a backend that throws while starting) is shown with its details. To handle it in the frontend instead, keep the app running:
+
+```rust
+use tauri_plugin_dotnet::{HostfxrHost, OnStartError};
+
+    .plugin(tauri_plugin_dotnet::init_with(|app| {
+        HostfxrHost::new(tauri_plugin_dotnet::backend_options!(app, "MyApp.Backend").on_start_error(OnStartError::KeepRunning))
+    }))
+```
+
+Every call then rejects with the reason: an error of type `RuntimeMissing` (whose first line is written for the user) or `HostInitFailed`. A custom `DotNetHost` chooses the same way through `DotNetHost::on_start_error`.
+
+**Finding the runtime**: `hostfxr` is looked up, in order, in `HostfxrOptions::dotnet_root` (if set, with no fallback), `DOTNET_ROOT_<ARCH>`, `DOTNET_ROOT`, a `dotnet` folder next to the executable, the folder of the first `dotnet` on `PATH`, then the platform's default install locations. The newest `hostfxr` found is used.
+
+**Matching versions**: the crate and the NuGet package talk through an interface that changes from one version to the next, so they must be the same major and minor version (`0.3.x` with `0.3.x`); the patch number may differ. Before it starts the backend, the crate asks the package for its version and refuses a mismatch with a `HostInitFailed` error that names both versions and says which of the two to update. A pre-release suffix (`0.3.0-beta.1`) is ignored, and a package too old to report a version is treated as older. For this to hold, a release that changes how the two talk to each other must raise the minor version (while the major version is 0), and a patch release must not.
+
+### Shutting down
+
+When the app exits, .NET is told. Tauri ends the process without shutting the .NET runtime down, so nothing in the backend gets a `ProcessExit` event, a finalizer or a `Dispose` on its own (checked in the sample). The plugin does it on Tauri's exit event (`RunEvent::Exit`):
+
+1. New calls are rejected with an error of type `HostStopped`, and calls in flight are cancelled through their `CancellationToken` and given a second to finish.
+2. The services you registered are disposed in the reverse of the order they were registered: `DisposeAsync` when a service implements `IAsyncDisposable`, otherwise `Dispose`. A service that throws is logged and does not stop the others.
+3. The backend's own `ShutdownAsync` runs, for whatever the backend created itself and no service owns.
+
+```csharp
+public sealed class Backend : IBridgeBackend
+{
+    private readonly Database _database = new();
+
+    public void Configure(BridgeDispatcher dispatcher) =>
+        dispatcher.RegisterService(new NotesService(_database));
+
+    public Task ShutdownAsync(CancellationToken cancellationToken) => _database.CloseAsync(cancellationToken);
+}
+```
+
+- **It waits a bounded time.** The thread that is ending the app waits for the shutdown for at most `HostfxrOptions::shutdown_timeout`, 5 seconds by default (`Duration::ZERO` skips it), and then the app exits whether or not a `Dispose` is still running. In the sample, a disposal that took 15 seconds made the app exit after 5.06 seconds. Keep disposal short; the token passed to `ShutdownAsync` fires when the host stops waiting.
+- **It is best effort.** It runs when the app really exits: the window is closed, or `exit()` or `restart()` is called. A crash, a forced kill or a power loss skips it, so keep data safe on disk as you go and do not rely on it alone. This describes `HostfxrHost`; the dev-only sidecar host stops the same way, over its own connection, whenever it restarts (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+- **Tray apps.** An app that vetoes `ExitRequested` to keep running is not exiting, so nothing is stopped.
+- **A closed window does not cancel its calls** while the app keeps running: they continue until they finish, and their result is dropped.
+
+### Development: the dev-only sidecar host
+
+In a debug build, `backend!`/`any_backend_host!` run the backend as a separate child process (`SidecarHost`) instead of inside the app, and talk to it over a local socket using the same wire protocol `HostfxrHost` uses. This is what [Changing C# while `tauri dev` runs](#getting-started) relies on:
+
+- **No file lock to work around.** Before spawning it, the plugin copies the backend's whole folder to a private, temporary location (see [Development: the backend is loaded from a copy](#development-the-backend-is-loaded-from-a-copy) below) and points the sidecar at the copy. The original build output is never opened by this process at all, so `dotnet build` can always overwrite it - including while the previous sidecar is still running and answering calls, and including a dependency dll (a NuGet package bump, or the plugin library itself) that changed, not just the backend's own dll.
+- **The plugin watches the backend's build output itself** (not `tauri dev`'s own watcher) and, once a burst of rebuild-related writes settles, kills the old sidecar process, makes a fresh copy and starts a new one against it, then reconnects. Nothing about the Tauri app, its window or the frontend is touched.
+- **In flight when it happens?** A call already running when a restart starts is failed with an error of type `HostRestarting`; a crash of the sidecar itself (not a deliberate restart) fails calls with `HostSidecarCrashed`. Either way, retrying after the restart works normally.
+- The sidecar-runner tool ships prebuilt in the NuGet package; the package's build targets copy it (`Tauri.Plugin.DotNet.SidecarHost.dll` and its small `.deps.json`/`.runtimeconfig.json`) next to the backend dll after each Debug build, so it travels inside the same shadow copy as the backend and is launched from there - nothing to configure.
+- This only runs in development. A release build loads the backend inside the app itself through `HostfxrHost`, exactly as described in [Hosting](#hosting-net-runs-inside-the-tauri-process), which is also what an app gets if it constructs `HostfxrHost` directly instead of using `backend!`/`any_backend_host!`.
+
+### Development: the backend is loaded from a copy
+
+Both the sidecar host above and a manually constructed `HostfxrHost` used for development load the backend from a private copy of its folder, not the build output directly, so `dotnet build` is never blocked by the running app: the runtime keeps the files it loaded open, and on Windows a loaded assembly cannot be overwritten, so running straight from the build output would block a rebuild.
+
+- Each start (for the sidecar host, each restart) copies the whole folder (subfolders such as `runtimes/` included) to a new folder named `tauri-plugin-dotnet-shadow-<pid>-<time>-<n>` in the system temp directory. Copying the 18 files of the sample's `bin/Debug` folder took 14 to 18 milliseconds. A file a build is writing at that moment is retried for up to three seconds.
+- The copies of earlier runs are removed at the next start, but only if they are older than a minute and their process has ended (on Windows, a copy with an assembly that is still loaded is left alone; on Linux the process id is looked up in `/proc`; elsewhere only copies older than a day are removed). Copies of running apps, such as a second app in development, are kept. The last copy stays after the app ends, until the next start.
+- `Assembly.Location` points into the copy, not into your `bin` folder - which is also what lets a native dependency (a `runtimes/<rid>/native/` dll) resolve normally, and lets a debugger's source paths bind normally, the same as loading straight from `bin` would.
+- `HostfxrHost`'s own copy is controlled by `HostfxrOptions`: on in **debug builds** of the app by default, off in release; `.shadow_copy(true)` or `.shadow_copy(false)` overrides that, and it does not apply to an [embedded](#optional-embed-the-backend-in-the-executable) backend. The sidecar host always does this; there is no setting to turn it off. Note that neither host restarts itself on a Rust-side change - `HostfxrHost` also never restarts itself on a rebuild of the backend, unlike the sidecar host, which does that on its own.
+
+### Optional: embed the backend in the executable
+
+By default the backend runs in path mode: a set of files next to the app. If you would rather not ship them, the backend can travel inside the Tauri executable instead, as the embedded mode. This is opt-in at build time, and nothing changes unless you turn it on.
+
+1. Build the backend with `TauriDotNetEmbed`. After the build, a bundle (all assemblies, their symbols, and the runtime config, in one file) is written to `TauriDotNetBundlePath`, `<output folder>\<AssemblyName>.tdnbundle` by default, so a Debug build and a Release build each get their own:
+
+   ```shell
+   dotnet build -p:TauriDotNetEmbed=true
+   dotnet build -c Release -p:TauriDotNetEmbed=true
+   ```
+
+2. Embed it and give the host the bytes instead of a path, in place of the `backend!` line (use your own backend project name):
+
+   ```rust
+   .plugin(tauri_plugin_dotnet::init_with(|_app| {
+       HostfxrHost::new(tauri_plugin_dotnet::embedded_backend_options!("MyApp.Backend"))
+   }))
+   ```
+
+   `embedded_backend_options!` picks the bundle for the current build profile (Debug or Release), assuming the same layout as `backend!` and taking the same `assembly` and `tfm` keys. Put this behind a Cargo feature (the sample calls it `embedded-backend`), because it fails to compile until the matching bundle exists. A release build of the app needs the Release bundle: it does not fall back to the Debug one.
+
+   To switch between files and embedding with that feature (as the sample does, to show both), use `any_backend_options!(app, "MyApp.Backend")` inside `init_with` instead. It picks the embedded form when your crate's own `embedded-backend` feature is on. The feature has to have exactly that name and be declared in your `[features]` table (`embedded-backend = []`) even while it is off, or Cargo's `unexpected_cfgs` lint warns.
+
+   If your layout differs, write it by hand. `include_bytes!` takes a fixed path, resolved relative to the file that contains it, so choose it by build profile:
+
+   ```rust
+   .plugin(tauri_plugin_dotnet::init_with(|_app| {
+       #[cfg(debug_assertions)]
+       let bundle = include_bytes!("../../src-dotnet/MyApp.Backend/bin/Debug/net8.0/MyApp.Backend.tdnbundle");
+       #[cfg(not(debug_assertions))]
+       let bundle = include_bytes!("../../src-dotnet/MyApp.Backend/bin/Release/net8.0/MyApp.Backend.tdnbundle");
+       HostfxrHost::new(HostfxrOptions::embedded(bundle))
+   }))
+   ```
+
+What you need to know:
+
+- **The .NET runtime requirement is unchanged** (see [Requirements](#requirements)); for this mode it must be .NET 8 or newer, since loading assemblies from memory needs .NET 8. Runtime discovery is unchanged.
+- **Managed assemblies only.** Native libraries (for example SQLite's), satellite resource assemblies and anything under `runtimes/` are not embedded; the tool warns about them at build time. A backend that needs them still has to ship files.
+- **One small file is still written.** hostfxr can only start from a `runtimeconfig.json` on disk, so a copy of the embedded one goes into a new folder in the system temp directory while the runtime starts, and is removed straight after.
+- **Everything loads into .NET's default load context** (the path mode uses an isolated one), so a package version that clashes with the framework's own is not isolated. `Assembly.Location` is an empty string for these assemblies, so backend code must not rely on it.
+- The bundle carries the assemblies of the build it was made from. Rebuild the backend, then rebuild the app, to update it. An unchanged backend leaves the bundle file untouched, so Cargo does not rebuild.
+- Stack traces keep their line numbers, because the symbols are embedded too.
+
+## Debugging and logs
+
+**A missing permission** is a common first error. Without `"dotnet:default"` in a capability that covers the window, every call rejects with `dotnet.call not allowed. Permissions associated with this command: dotnet:allow-call, dotnet:default`. It reaches your code as a normal `Error` through the generated binding, and the message names the fix.
+
+### Seeing the Rust plugin's own logs
+
+The Rust side of `tauri-plugin-dotnet` logs through the standard `log` crate, the same way Tauri itself and every other Tauri plugin does - sidecar restarts and their shadow-copy timing, `HostInitFailed`/`RuntimeMissing` details, and so on. A fresh `npm create tauri-app` scaffold has no logger installed at all, so none of this prints anywhere (Tauri's own internal logs included) until the app wires one up itself; `log`'s macros are silent no-ops without one, by design - no library, this one included, is allowed to install a logger for you, since only one can exist per process.
+
+[`tauri-plugin-log`](https://github.com/tauri-apps/tauri-plugin-log) is the easiest way to get one. Its defaults already print to this same terminal and write a file under the OS log directory - nothing extra to configure:
+
+```rust
+tauri::Builder::default()
+    // Register first: its setup() installs the global `log` logger that every later plugin's own
+    // log::info!/debug!/etc. calls write through. Registered after tauri_plugin_dotnet instead, its
+    // earliest setup-time log line (the sidecar's initial shadow copy) would already be missed.
+    .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Debug).build())
+    .plugin(tauri_plugin_dotnet::init_with(|app| {
+        tauri_plugin_dotnet::any_backend_host!(app, "MyApp.Backend")
+    }))
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
+```
+
+(`cargo add tauri-plugin-log log`.) `Debug` is worth it during development - it also surfaces the sidecar's shadow-copy timing; `Info` alone still shows restarts and errors. See the [sample app](#sample-app)'s own `lib.rs` for this wired up.
+
+### Logging to a file
+
+An installed Windows app has no console, so the console logger shows nothing there. Log to a file instead. This example uses Serilog (`dotnet add package Serilog.Extensions.Logging --version 8.0.0`, matching the `Microsoft.Extensions.Logging` 8.0 the plugin uses, and `dotnet add package Serilog.Sinks.File`); its assemblies are copied next to your backend, so they ship with it:
+
+```csharp
+using Microsoft.Extensions.Logging;
+using Serilog;
+using Tauri.Plugin.DotNet;
+
+public sealed class Backend : IBridgeBackend
+{
+    // Read once, before Configure.
+    public ILoggerFactory? LoggerFactory { get; } = CreateLoggerFactory();
+
+    public void Configure(BridgeDispatcher dispatcher) => dispatcher.RegisterService(new GreetService());
+
+    private static ILoggerFactory CreateLoggerFactory()
+    {
+        var folder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MyApp", "logs");
+
+        var serilog = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.File(Path.Combine(folder, "backend-.log"),
+                rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
+            .CreateLogger();
+
+        return Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddSerilog(serilog, dispose: true));
+    }
+}
+```
+
+The bridge then logs each service it registers and every exception a service method throws, with its stack trace (line numbers need the `.pdb` next to the dll, as in a Debug build). With this backend, both `tauri dev` and an installed NSIS build wrote `%LOCALAPPDATA%\MyApp\logs\backend-<date>.log` and printed nothing to the console. Checked on Windows only.
+
+### Debugging C#
+
+Both hosts run the backend from a private copy of your build output (see [Development: the backend is loaded from a copy](#development-the-backend-is-loaded-from-a-copy)), with the `.pdb` copied alongside it, so the debugger finds your source files through the paths recorded there and breakpoints in your project's files bind as usual either way.
+
+**With the default dev-only sidecar host** (`backend!`/`any_backend_host!` in a debug build): the backend runs in its own `dotnet` process, separate from the Tauri app, so attach a .NET debugger to that process instead of to `myapp.exe` - look for the `dotnet` process whose command line runs `Tauri.Plugin.DotNet.SidecarHost.dll` (several `dotnet.exe` processes can be running at once, so match on the command line, not just the name). A restart after a rebuild is a new process, so the debugger has to attach again. This has not been verified with a real debugger yet.
+
+**With a manually constructed `HostfxrHost`** (bypassing the sidecar): the backend runs inside the Tauri process itself, so attach to the app (`myapp.exe` while `tauri dev` runs). A breakpoint in a service method is hit when the webview calls it, and detaching leaves the app running. A relaunch after a rebuild is a new process, so the debugger has to attach again.
+
+Verified with [netcoredbg](https://github.com/Samsung/netcoredbg) 3.2.0 against `HostfxrHost` running from that copy: it attached to the running app, stopped at a breakpoint in `BackendService.Greet` when the webview called it, showed the parameter and locals, and after `continue` the call returned normally. Not tried with VS Code, Visual Studio or Rider, the sidecar host, nor with a Release or [embedded](#optional-embed-the-backend-in-the-executable) backend (Release code is optimised, so locals may be missing). In VS Code, an attach configuration for the `HostfxrHost` case would look like this (not tried):
+
+```json
+{ "name": "Attach to the Tauri app", "type": "coreclr", "request": "attach", "processName": "myapp.exe" }
+```
+
+**Startup code** (your `IBridgeBackend` constructor and `Configure`) has already run by the time you can attach. To debug it, make the backend wait for a debugger:
+
+```csharp
+public void Configure(BridgeDispatcher dispatcher)
+{
+    if (Environment.GetEnvironmentVariable("MYAPP_WAIT_FOR_DEBUGGER") == "1")
+        while (!System.Diagnostics.Debugger.IsAttached)
+            Thread.Sleep(100);
+
+    dispatcher.RegisterService(new GreetService());   // set a breakpoint here
+}
+```
+
+Start the app with that variable set, attach, and it continues into your breakpoint. This was checked with netcoredbg: the app stayed blocked until the attach, then stopped at the breakpoint and ran normally afterwards. The window is already open while the backend waits.
+
+## Shipping your app
+
+`tauri build` does not know about the .NET backend, so you have to get it into the package. There are two ways, matching the [path and embedded modes](#hosting-net-runs-inside-the-tauri-process) above.
+
+### Default: ship the backend folder as a Tauri resource
+
+This is the path mode, and what [Getting started](#getting-started) sets up. The backend's build output folder (your assembly, its `.runtimeconfig.json` and `.deps.json`, `Tauri.Plugin.DotNet.dll`, dependencies, and any `runtimes/` folder) is copied next to the app by `bundle.resources`, and the host loads it from there. This works for every backend, including ones with native libraries, and it keeps the isolated load context.
+
+- **Why a fixed `src-tauri/backend` folder.** Tauri checks that every `bundle.resources` path exists whenever the app is compiled, `tauri dev` included, and a glob that matches nothing fails too. A path such as `bin/Release/net8.0/` does not exist on a fresh clone (dev only builds Debug), and it would hard-code the target framework. A fixed folder that `beforeBuildCommand` builds into avoids that; the package's build creates it, empty, on the first Debug build, so it needs no placeholder in git. `tauri dev` never writes there (it would make cargo recompile the Rust side, because Tauri watches the resource files), so it stays empty until the first `tauri build`.
+- The mapping copies the whole folder recursively, including `.pdb` files and anything else in it. `dotnet build -o` also collects referenced projects' output, so a backend that references a project of your own gets that project's files too.
+- `dotnet build` does not remove files, so delete the contents of `src-tauri/backend` before a release build if you dropped a dependency.
+- On Windows the resource directory is the install folder, so the installed layout is `MyApp.exe` next to `dotnet\`.
+
+### Optional: a single executable
+
+This is the embedded mode. If your backend has only managed dependencies and you want no backend files on disk, embed it instead (see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)). Add `-p:TauriDotNetEmbed=true` to the backend build in `beforeBuildCommand` and build the app with your `embedded-backend` feature. That build writes into `src-tauri/backend` (`-o`), so the bundle is written there too and the release path in your `include_bytes!` is `../backend/MyApp.Backend.tdnbundle`. Drop the `backend/` mapping from `bundle.resources` when you embed, or the installer ships the backend files as well. It cannot carry native libraries, so a backend that uses SQLite, for example, has to use the default above.
+
+### What has been checked
+
+On Windows:
+
+- **A new project following Getting started**, from a fresh `npm create tauri-app`: `tauri dev` started from a checkout with no backend built and the UI called C# through the generated `GreetService.Greet`; `tauri build --bundles nsis` produced an installer, and the silently installed app answered the same call.
+- **The sample app**, the same two ways (`tauri dev` from a clean state; NSIS installed and run with calls, errors and logging).
+- The MSI, unpacked with `msiexec /a` rather than installed.
+- A backend using `Microsoft.Data.Sqlite`, whose native library loaded from `dotnet\runtimes\win-x64\native` in an installed app (checked with the earlier `bin/Release` mapping; the folder contents are the same).
+
+Not tried: a full `tauri build` with the embedded mode, an MSI install under Program Files, and Linux or macOS packages.
+
+## Limitations
+
+- **Framework-dependent only.** Self-contained backends are not supported by this hosting mode (see [Requirements](#requirements) for the runtime the target machine needs).
+- **One runtime per process, and no isolation.** A crash or stack overflow in C# takes the app down with it.
+- **Windows only so far.** The runtime discovery has Linux and macOS paths, but none of it has been run there.
+- **Release bundling is manual.** You add the `bundle.resources` entry yourself (see [Shipping your app](#shipping-your-app)); nothing configures it for you. Only Windows installers have been tried.
+- **A C# change restarts the sidecar process, not the backend in-process.** There is no in-process hot reload; a call made mid-restart rejects with `HostRestarting` and can be retried (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+- The dispatcher uses reflection, so backends cannot be NativeAOT-compiled.
+
+## Sample app
+
+`samples/SampleApp` is a Tauri app (React \+ Vite frontend, `src-tauri` Rust shell, `src-dotnet/SampleApp.Backend` C# backend) ported from the Wry.NET sample. Its `BackendService` demonstrates the RPC surface: sync/async/`ValueTask` calls, models with inheritance, `byte[]`, timeouts, cancellation, progress events, and an event sent only to the calling window. The child-window demo opens windows with Tauri's own JS API, and the file-dialog demo has C# ask the window to show a Tauri dialog (a typed frontend call); the permissions are granted in `src-tauri/capabilities/default.json`.
+
+`beforeDevCommand` / `beforeBuildCommand` in `tauri.conf.json` run `dotnet build` first, which generates the TypeScript bindings into `src/bindings` before Vite runs: a Debug build in the project's `bin` folder for `tauri dev`, a Release build into `src-tauri/backend` (which `bundle.resources` ships) for `tauri build`. While `tauri dev` runs, `dotnet build src-dotnet/SampleApp.Backend` (or `dotnet watch build --project src-dotnet/SampleApp.Backend`) restarts just the .NET sidecar on the new C#, with the app window untouched.
+
+```shell
+cd samples/SampleApp
+npm install
+npm run tauri dev      # or: npm run tauri build
+```
+
+Without the Tauri CLI, build the pieces yourself:
+
+```shell
+dotnet build src-dotnet/SampleApp.Backend
+npm run build
+cd src-tauri && cargo run --features custom-protocol
+```
+
+## Development
+
+```shell
+# Rust plugin
+cargo test
+
+# .NET (dispatcher, generator)
+dotnet test dotnet/Tauri.Plugin.DotNet.slnx
+```
+
+See [Requirements](#requirements) for the toolchain.
+
+## License
+
+MIT

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the main window and the child windows it opens.",
+  "windows": ["main", "child-*"],
+  "permissions": [
+    "core:default",
+    "dotnet:default",
+    "dialog:default",
+    "core:webview:allow-create-webview-window"
+  ]
+}

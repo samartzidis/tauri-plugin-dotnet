@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "sample-app",
+  "version": "0.1.0",
+  "identifier": "com.example.sample-app",
+  "build": {
+    "beforeDevCommand": "dotnet build src-dotnet/SampleApp.Backend && npm run dev",
+    "beforeBuildCommand": "dotnet build src-dotnet/SampleApp.Backend -c Release -o src-tauri/backend && npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tauri.Plugin.DotNet Sample App",
+        "width": 1024,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "backend/": "dotnet/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

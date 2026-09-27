@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NuGet consumers get this .props (and the .targets below) automatically from the package; with a
+    ProjectReference they are imported explicitly. The .props sets what the plugin's hostfxr host needs
+    to load the backend into the Tauri process: EnableDynamicLoading, GenerateRuntimeConfigurationFiles
+    and CopyLocalLockFileAssemblies.
+  -->
+  <Import Project="..\..\..\..\dotnet\src\Tauri.Plugin.DotNet\build\Tauri.Plugin.DotNet.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\dotnet\src\Tauri.Plugin.DotNet\Tauri.Plugin.DotNet.csproj" />
+    <!-- Console output for the bridge's own logging (see Backend.LoggerFactory). -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.*" />
+  </ItemGroup>
+
+  <!--
+    The generator (TypeScript bindings, and the bundle of the optional embedding: dotnet build
+    -p:TauriDotNetEmbed=true, written next to the build output, bin/<Configuration>/net8.0/) and the
+    dev-only sidecar-runner tool run from source here instead of from the NuGet package that real
+    consumers get them from.
+  -->
+  <PropertyGroup>
+    <TauriDotNetGeneratorCommand>dotnet run --project ..\..\..\..\dotnet\src\Tauri.Plugin.DotNet.Generator\Tauri.Plugin.DotNet.Generator.csproj --</TauriDotNetGeneratorCommand>
+    <TauriDotNetSidecarPath>..\..\..\..\dotnet\src\Tauri.Plugin.DotNet.SidecarHost\bin\$(Configuration)\net8.0\Tauri.Plugin.DotNet.SidecarHost.dll</TauriDotNetSidecarPath>
+  </PropertyGroup>
+
+  <!--
+    The targets copy runtime.ts into src\bindings (the default output dir, relative to this project:
+    samples\SampleApp\src\bindings).
+  -->
+  <Import Project="..\..\..\..\dotnet\src\Tauri.Plugin.DotNet\build\Tauri.Plugin.DotNet.targets" />
+
+</Project>
