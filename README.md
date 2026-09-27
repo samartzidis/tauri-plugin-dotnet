@@ -477,17 +477,6 @@ This is the path mode, and what [Getting started](#getting-started) sets up. The
 
 This is the embedded mode. If your backend has only managed dependencies and you want no backend files on disk, embed it instead (see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)). Add `-p:TauriDotNetEmbed=true` to the backend build in `beforeBuildCommand` and build the app with your `embedded-backend` feature. That build writes into `src-tauri/backend` (`-o`), so the bundle is written there too and the release path in your `include_bytes!` is `../backend/MyApp.Backend.tdnbundle`. Drop the `backend/` mapping from `bundle.resources` when you embed, or the installer ships the backend files as well. It cannot carry native libraries, so a backend that uses SQLite, for example, has to use the default above.
 
-### What has been checked
-
-On Windows:
-
-- **A new project following Getting started**, from a fresh `npm create tauri-app`: `tauri dev` started from a checkout with no backend built and the UI called C# through the generated `GreetService.Greet`; `tauri build --bundles nsis` produced an installer, and the silently installed app answered the same call.
-- **The sample app**, the same two ways (`tauri dev` from a clean state; NSIS installed and run with calls, errors and logging).
-- The MSI, unpacked with `msiexec /a` rather than installed.
-- A backend using `Microsoft.Data.Sqlite`, whose native library loaded from `dotnet\runtimes\win-x64\native` in an installed app (checked with the earlier `bin/Release` mapping; the folder contents are the same).
-
-Not tried: a full `tauri build` with the embedded mode, an MSI install under Program Files, and Linux or macOS packages.
-
 ## Limitations
 
 - **Framework-dependent only.** Self-contained backends are not supported by this hosting mode (see [Requirements](#requirements) for the runtime the target machine needs).
