@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-dotnet"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["George Samartzidis"]
 description = "Tauri plugin that connects the frontend to .NET services through a typed RPC bridge."
 edition = "2021"
