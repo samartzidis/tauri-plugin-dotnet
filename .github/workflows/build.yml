@@ -3,10 +3,11 @@ name: Build, Test & Publish
 on:
   workflow_dispatch:
     inputs:
-      tag_name:
-        description: 'Release tag (e.g. v0.1.0). Leave empty to only build, test and pack.'
+      publish:
+        description: 'Also create a GitHub Release and publish to nuget.org/crates.io, using the version already in the csproj/Cargo.toml. Leave unchecked to only build, test and pack.'
         required: false
-        type: string
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,12 +38,17 @@ jobs:
         run: cargo test
 
   # ---------------------------------------------------------------------------
-  # Pack: build the nupkg and the crate package
+  # Pack: build the nupkg and the crate package. The csproj and Cargo.toml
+  # versions are the single source of truth - no tag or version is typed in
+  # by hand; the release tag (when publishing) is derived from them.
   # ---------------------------------------------------------------------------
   pack:
     needs: test
     runs-on: windows-latest
     name: Pack
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -53,22 +59,17 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Verify tag matches package/crate version
-        if: github.event.inputs.tag_name != ''
+      - name: Read and verify version
+        id: version
         shell: bash
         run: |
-          TAG_VERSION="${{ github.event.inputs.tag_name }}"
-          TAG_VERSION="${TAG_VERSION#v}"
           CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj)
           CRATE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/')
-          if [ "$TAG_VERSION" != "$CSPROJ_VERSION" ]; then
-            echo "Tag v$TAG_VERSION does not match <Version>$CSPROJ_VERSION</Version> in Tauri.Plugin.DotNet.csproj"
+          if [ "$CSPROJ_VERSION" != "$CRATE_VERSION" ]; then
+            echo "csproj <Version>$CSPROJ_VERSION</Version> does not match Cargo.toml version \"$CRATE_VERSION\""
             exit 1
           fi
-          if [ "$TAG_VERSION" != "$CRATE_VERSION" ]; then
-            echo "Tag v$TAG_VERSION does not match Cargo.toml version $CRATE_VERSION"
-            exit 1
-          fi
+          echo "version=$CSPROJ_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Pack nupkg
         run: dotnet pack dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj -c Release -o artifacts
@@ -92,16 +93,18 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Publish: create the GitHub Release, then push to nuget.org and crates.io
-  # via Trusted Publishing (OIDC) - only when tag_name is set. Gated behind
-  # the "publish" environment - configure required reviewers on it under repo
-  # Settings > Environments so this job pauses for human approval before
-  # anything is pushed. The packed artifacts are already inspectable from the
-  # "pack" job's upload, so the reviewer can check them before approving.
+  # Publish: create the GitHub Release (tag derived from the version above,
+  # created automatically since it doesn't exist yet), then push to nuget.org
+  # and crates.io via Trusted Publishing (OIDC) - only when the "publish"
+  # input is checked. Gated behind the "publish" environment - configure
+  # required reviewers on it under repo Settings > Environments so this job
+  # pauses for human approval before anything is pushed. The packed artifacts
+  # are already inspectable from the "pack" job's upload, so the reviewer can
+  # check them before approving.
   # ---------------------------------------------------------------------------
   publish:
     needs: pack
-    if: github.event.inputs.tag_name != ''
+    if: inputs.publish
     runs-on: ubuntu-latest
     name: Publish
     environment: publish
@@ -109,11 +112,12 @@ jobs:
       contents: write   # to create the GitHub Release
       id-token: write   # required for both NuGet and crates.io Trusted Publishing (OIDC)
 
+    env:
+      TAG: v${{ needs.pack.outputs.version }}
+
     steps:
-      - name: Checkout tag
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag_name }}
 
       - name: Download packages
         uses: actions/download-artifact@v4
@@ -124,8 +128,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag_name }}
-          name: Release ${{ github.event.inputs.tag_name }}
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true
 
