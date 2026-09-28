@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType>embedded</DebugType>
+    <EmbedAllSources>true</EmbedAllSources>
+    <EnableSourceLink>false</EnableSourceLink>
 
     <!-- NuGet package metadata -->
     <PackageId>Tauri.Plugin.DotNet</PackageId>
