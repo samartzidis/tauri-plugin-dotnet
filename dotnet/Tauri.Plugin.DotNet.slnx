@@ -1,12 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Tauri.Plugin.DotNet.Generator/Tauri.Plugin.DotNet.Generator.csproj" />
-    <Project Path="src/Tauri.Plugin.DotNet.SidecarHost/Tauri.Plugin.DotNet.SidecarHost.csproj" />
     <Project Path="src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Tauri.Plugin.DotNet.Generator.Tests/Tauri.Plugin.DotNet.Generator.Tests.csproj" />
-    <Project Path="tests/Tauri.Plugin.DotNet.SidecarHost.Tests/Tauri.Plugin.DotNet.SidecarHost.Tests.csproj" />
     <Project Path="tests/Tauri.Plugin.DotNet.Tests/Tauri.Plugin.DotNet.Tests.csproj" />
   </Folder>
 </Solution>

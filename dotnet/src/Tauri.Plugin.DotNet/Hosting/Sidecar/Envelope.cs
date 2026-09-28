@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Tauri.Plugin.DotNet.SidecarHost;
+namespace Tauri.Plugin.DotNet.Hosting.Sidecar;
 
 /// <summary>
 /// One message on the sidecar's local socket. Mirrors the Rust plugin's <c>Envelope</c>

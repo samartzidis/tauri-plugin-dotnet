@@ -7,11 +7,11 @@
     This file:
     1. Copies the TypeScript bridge runtime to the frontend's bindings folder.
     2. Runs the binding generator against the consumer's compiled assembly.
-    3. After a successful Debug build, copies the dev-only sidecar-runner tool next to the backend dll,
-       which the Rust plugin's SidecarHost (`backend!`/`any_backend_host!` in a debug build) launches
-       (from its own shadow copy, alongside the backend) to restart just the .NET side on its own - no
-       Tauri restart, no frontend reload.
-    4. Creates the empty src-tauri\backend folder that Tauri requires to exist (see TauriDotNetResourceFolder).
+    3. Creates the empty src-tauri\backend folder that Tauri requires to exist (see TauriDotNetResourceFolder).
+
+    The dev-only sidecar host (`backend!`/`any_backend_host!` in a debug build) needs no build-time step
+    from this file: it generates its own small wrapper project referencing the backend's .csproj directly
+    and runs it under `dotnet watch` (see src/sidecar.rs and src/sidecar/wrapper.rs in the crate).
 
     Building and bundling the frontend is left to Tauri (beforeDevCommand / beforeBuildCommand).
 
@@ -30,22 +30,6 @@
                                                if its parent exists, because Tauri needs it to exist to compile
                                                (default: ..\..\src-tauri\backend)
       $(TauriDotNetSkipResourceFolder)       - Set to 'true' to never create that folder
-      $(TauriDotNetSkipSidecar)              - Set to 'true' to skip copying the dev-only sidecar-runner tool
-                                               (see below)
-      $(TauriDotNetSidecarPath)               - The sidecar-runner tool's dll, relative to the project directory,
-                                               for developing this package itself: it then points at a source
-                                               build instead of the packaged tool (same idea as
-                                               TauriDotNetGeneratorCommand).
-                                               (default: <package>\tools\net8.0\Tauri.Plugin.DotNet.SidecarHost.dll)
-
-    Development: the dev-only sidecar host
-      After a successful Debug build, copies the prebuilt sidecar-runner tool (packaged alongside the
-      generator, tools\net8.0\) - Tauri.Plugin.DotNet.SidecarHost.dll plus its .deps.json/.runtimeconfig.json -
-      next to the backend dll. It is a plain framework-dependent build (no RID, no single-file), so one copy
-      runs on any OS with a matching .NET runtime installed. Placing it next to the backend dll means it
-      rides along inside the same shadow copy the Rust plugin's SidecarHost already makes of the backend's
-      folder (src/shadow.rs) and is launched FROM that copy, never from this original build output - so a
-      rebuild never needs to wait for the running sidecar process to release either file.
 
     Optional: embedding the backend in the Tauri executable (off by default)
       $(TauriDotNetEmbed)                    - Set to 'true' (for example dotnet build -p:TauriDotNetEmbed=true) to
@@ -63,8 +47,6 @@
     <_TauriDotNetToolTfm>net8.0</_TauriDotNetToolTfm>
     <!-- Exec takes a raw command string, so paths passed to it are normalized to the OS separator -->
     <_TauriDotNetGeneratorDll>$([MSBuild]::NormalizePath('$(_TauriDotNetPkgDir)', 'tools', '$(_TauriDotNetToolTfm)', 'Tauri.Plugin.DotNet.Generator.dll'))</_TauriDotNetGeneratorDll>
-    <_TauriDotNetSidecarDll Condition="'$(TauriDotNetSidecarPath)' != ''">$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(TauriDotNetSidecarPath)'))</_TauriDotNetSidecarDll>
-    <_TauriDotNetSidecarDll Condition="'$(TauriDotNetSidecarPath)' == ''">$([MSBuild]::NormalizePath('$(_TauriDotNetPkgDir)', 'tools', '$(_TauriDotNetToolTfm)', 'Tauri.Plugin.DotNet.SidecarHost.dll'))</_TauriDotNetSidecarDll>
     <_TauriDotNetOutputDirFull>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(TauriDotNetOutputDir)'))</_TauriDotNetOutputDirFull>
     <TauriDotNetResourceFolder Condition="'$(TauriDotNetResourceFolder)' == ''">..\..\src-tauri\backend</TauriDotNetResourceFolder>
     <_TauriDotNetResourceFolderFull>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(TauriDotNetResourceFolder)'))</_TauriDotNetResourceFolderFull>
@@ -121,25 +103,6 @@
           BeforeTargets="BeforeBuild"
           Condition="'$(Configuration)' == 'Debug' AND '$(TauriDotNetSkipResourceFolder)' != 'true' AND Exists('$([System.IO.Path]::GetDirectoryName($(_TauriDotNetResourceFolderFull)))') AND !Exists('$(_TauriDotNetResourceFolderFull)')">
     <MakeDir Directories="$(_TauriDotNetResourceFolderFull)" />
-  </Target>
-
-  <!--
-    Dev-only sidecar host: copy the runner tool next to this backend's build output. Runs after every
-    successful Debug build, not gated on the assembly having changed - SkipUnchangedFiles keeps it cheap
-    when the tool itself hasn't changed, and always correct even if a previous build was skipped or failed.
-    The glob only matches files that exist, so a publish without a pdb (or without a deps.json, if the
-    tool ever has no dependencies to list) is not an error.
-  -->
-  <Target Name="TauriDotNetCopySidecarHost"
-          AfterTargets="Build"
-          Condition="'$(Configuration)' == 'Debug' AND '$(TauriDotNetSkipSidecar)' != 'true'">
-    <PropertyGroup>
-      <_TauriDotNetSidecarDir>$([System.IO.Path]::GetDirectoryName('$(_TauriDotNetSidecarDll)'))</_TauriDotNetSidecarDir>
-    </PropertyGroup>
-    <ItemGroup>
-      <_TauriDotNetSidecarHostFiles Include="$(_TauriDotNetSidecarDir)\Tauri.Plugin.DotNet.SidecarHost.*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_TauriDotNetSidecarHostFiles)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- Opt-in: pack the built backend (assemblies, symbols, runtime config) into one file the app can embed -->

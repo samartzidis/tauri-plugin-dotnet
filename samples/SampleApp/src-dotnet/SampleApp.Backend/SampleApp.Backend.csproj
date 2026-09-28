@@ -22,13 +22,11 @@
 
   <!--
     The generator (TypeScript bindings, and the bundle of the optional embedding: dotnet build
-    -p:TauriDotNetEmbed=true, written next to the build output, bin/<Configuration>/net8.0/) and the
-    dev-only sidecar-runner tool run from source here instead of from the NuGet package that real
-    consumers get them from.
+    -p:TauriDotNetEmbed=true, written next to the build output, bin/<Configuration>/net8.0/) runs from
+    source here instead of from the NuGet package that real consumers get it from.
   -->
   <PropertyGroup>
     <TauriDotNetGeneratorCommand>dotnet run --project ..\..\..\..\dotnet\src\Tauri.Plugin.DotNet.Generator\Tauri.Plugin.DotNet.Generator.csproj --</TauriDotNetGeneratorCommand>
-    <TauriDotNetSidecarPath>..\..\..\..\dotnet\src\Tauri.Plugin.DotNet.SidecarHost\bin\$(Configuration)\net8.0\Tauri.Plugin.DotNet.SidecarHost.dll</TauriDotNetSidecarPath>
   </PropertyGroup>
 
   <!--

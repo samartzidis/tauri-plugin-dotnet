@@ -83,8 +83,6 @@ Add `/backend/` to `src-tauri/.gitignore`: that is where the Release build goes.
 
 The same `dotnet build` copies `runtime.ts` and generates the TypeScript bindings into `src/bindings` (a fresh clone needs one `dotnet build` before `npm run build` or `cargo`, which the hooks do for you; commit the bindings or ignore them, as you prefer).
 
-Each Debug build also copies the sidecar-runner tool next to the backend dll, which the plugin uses to restart the backend on its own after a rebuild (see step 5 and [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
-
 **4. Call it from the frontend.**
 
 ```ts
@@ -95,12 +93,12 @@ const message = await GreetService.Greet("World"); // "Hello, World! Greetings f
 
 **5. Run and package.** `npm run tauri dev` runs the app; `npm run tauri build` makes the installer (see [Shipping your app](#shipping-your-app)).
 
-**Changing C# while `tauri dev` runs.** Build the backend the way you normally would: your IDE's Build, `dotnet build src-dotnet/MyApp.Backend`, or, to rebuild on every save, `dotnet watch build --project src-dotnet/MyApp.Backend` in a second terminal. Every successful build that changed the backend restarts just the .NET side on its own.
+**Changing C# while `tauri dev` runs.** Just save. The plugin runs the backend under `dotnet watch` itself (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)), so a saved edit is picked up automatically - no manual rebuild step, no second terminal.
 
-- **Why it works.** In a debug build, `backend!` runs the backend as a separate process instead of inside the app (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)). The plugin watches the backend's build output itself and, once a rebuild settles, kills that process and starts a new one against the fresh dll - the app's window, its Rust process and the frontend are never touched.
-- **What you see.** The window stays open and responsive; nothing reloads. A call made while the swap is in progress rejects with `HostRestarting` and can simply be retried. The Rust side is not recompiled or restarted (unless you also changed Rust code, which still triggers Tauri's own restart as usual).
-- **Errors.** A compile error shows in the build's own output; the previous backend process keeps running and answering calls. If a rebuild succeeds but the new process fails to start, calls reject with the reason until the next successful rebuild.
-- **Several builds in a row** are fine: the plugin coalesces a burst and restarts once, against the last build.
+- **Why it works.** In a debug build, `backend!` runs the backend as a separate process under `dotnet watch`, not inside the app. A method-body-only edit is applied in place with no restart at all (`dotnet watch`'s own Hot Reload); anything else (a new or changed method, a new type) restarts just that process once it compiles. The app's window, its Rust process and the frontend are never touched either way.
+- **What you see.** The window stays open and responsive; nothing reloads. A call made while the backend is disconnected - mid-restart, or after a real crash, deliberately not distinguished - fails immediately with `HostSidecarUnavailable`; retrying once the backend has reconnected works normally. The Rust side is not recompiled or restarted (unless you also changed Rust code, which still triggers Tauri's own restart as usual).
+- **Errors.** A compile error is reported by `dotnet watch` in its own console output; the previous backend process is left running and answering calls untouched until you fix it and save again.
+- **Several edits in a row** are fine: `dotnet watch` debounces its own rebuilds.
 
 ## How it fits together
 
@@ -217,7 +215,7 @@ The backend runs one of three ways. `backend!`/`any_backend_host!` pick between 
 
 |Mode|Process|Loaded from|When|
 |:---|:---|:---|:---|
-|**Sidecar**|separate `dotnet` process|a shadow copy of the build output|debug builds (`tauri dev`) — see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)|
+|**Sidecar**|separate `dotnet` process, managed by `dotnet watch`|a generated wrapper project referencing the backend|debug builds (`tauri dev`) — see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)|
 |**Path**|inside the Tauri process|a folder next to the app|release builds, by default|
 |**Embedded**|inside the Tauri process|bytes baked into the executable|opt-in — see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)|
 
@@ -305,28 +303,28 @@ public sealed class Backend : IBridgeBackend
 ```
 
 - **It waits a bounded time.** The thread that is ending the app waits for the shutdown for at most `HostfxrOptions::shutdown_timeout`, 5 seconds by default (`Duration::ZERO` skips it), and then the app exits whether or not a `Dispose` is still running. In the sample, a disposal that took 15 seconds made the app exit after 5.06 seconds. Keep disposal short; the token passed to `ShutdownAsync` fires when the host stops waiting.
-- **It is best effort.** It runs when the app really exits: the window is closed, or `exit()` or `restart()` is called. A crash, a forced kill or a power loss skips it, so keep data safe on disk as you go and do not rely on it alone. This describes `HostfxrHost`; the dev-only sidecar host stops the same way, over its own connection, whenever it restarts (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+- **It is best effort.** It runs when the app really exits: the window is closed, or `exit()` or `restart()` is called. A crash, a forced kill or a power loss skips it, so keep data safe on disk as you go and do not rely on it alone. This describes `HostfxrHost`; the dev-only sidecar host runs the same shutdown, over its own connection, when the app exits, but not when `dotnet watch` restarts it on a rebuild - that path is `dotnet watch`'s own, and is not a graceful `ShutdownAsync` (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
 - **Tray apps.** An app that vetoes `ExitRequested` to keep running is not exiting, so nothing is stopped.
 - **A closed window does not cancel its calls** while the app keeps running: they continue until they finish, and their result is dropped.
 
 ### Development: the dev-only sidecar host
 
-In a debug build, `backend!`/`any_backend_host!` run the backend as a separate child process (`SidecarHost`) instead of inside the app, and talk to it over a local socket using the same wire protocol `HostfxrHost` uses. This is what [Changing C# while `tauri dev` runs](#getting-started) relies on:
+In a debug build, `backend!`/`any_backend_host!` run the backend as a separate child process (`SidecarHost`) instead of inside the app, managed by `dotnet watch`, and talk to it over a local socket using the same wire protocol `HostfxrHost` uses. This is what [Changing C# while `tauri dev` runs](#getting-started) relies on:
 
-- **No file lock to work around.** Before spawning it, the plugin copies the backend's whole folder to a private, temporary location (see [Development: the backend is loaded from a copy](#development-the-backend-is-loaded-from-a-copy) below) and points the sidecar at the copy. The original build output is never opened by this process at all, so `dotnet build` can always overwrite it - including while the previous sidecar is still running and answering calls, and including a dependency dll (a NuGet package bump, or the plugin library itself) that changed, not just the backend's own dll.
-- **The plugin watches the backend's build output itself** (not `tauri dev`'s own watcher) and, once a burst of rebuild-related writes settles, kills the old sidecar process, makes a fresh copy and starts a new one against it, then reconnects. Nothing about the Tauri app, its window or the frontend is touched.
-- **In flight when it happens?** A call already running when a restart starts is failed with an error of type `HostRestarting`; a crash of the sidecar itself (not a deliberate restart) fails calls with `HostSidecarCrashed`. Either way, retrying after the restart works normally.
-- The sidecar-runner tool ships prebuilt in the NuGet package; the package's build targets copy it (`Tauri.Plugin.DotNet.SidecarHost.dll` and its small `.deps.json`/`.runtimeconfig.json`) next to the backend dll after each Debug build, so it travels inside the same shadow copy as the backend and is launched from there - nothing to configure.
+- **A small generated wrapper project, not the backend directly.** `dotnet watch` only rebuilds and watches what is in the project graph it runs, so the plugin generates a tiny throwaway console project next to the backend (under its `obj/` folder) with a real `ProjectReference` to it, purely so `dotnet watch` sees the backend's own source. The wrapper's only code is one line calling into the plugin library's `SidecarRunner`.
+- **`dotnet watch` owns the process from there.** It applies a method-body-only edit in place with no restart at all (its own Hot Reload); anything else - a new or changed method, a new type - restarts the process, but only once the change actually compiles. A change that does not compile leaves the previous, working process running untouched, reporting the error in its own console output instead.
+- **No file lock to work around**, for a different reason than a shadow copy: the backend's compiled output lands in the *wrapper's own* build folder via the ordinary `ProjectReference` copy, a separate file from the backend project's own output, so `dotnet build` never has to overwrite anything the running sidecar has open.
+- **In flight when it happens?** A call made while the sidecar is disconnected - mid-restart, or after a genuine crash, deliberately not distinguished - fails immediately with `HostSidecarUnavailable`. Retrying once it has reconnected works normally.
 - This only runs in development. A release build loads the backend inside the app itself through `HostfxrHost`, exactly as described in [Hosting](#hosting-net-runs-inside-the-tauri-process), which is also what an app gets if it constructs `HostfxrHost` directly instead of using `backend!`/`any_backend_host!`.
 
 ### Development: the backend is loaded from a copy
 
-Both the sidecar host above and a manually constructed `HostfxrHost` used for development load the backend from a private copy of its folder, not the build output directly, so `dotnet build` is never blocked by the running app: the runtime keeps the files it loaded open, and on Windows a loaded assembly cannot be overwritten, so running straight from the build output would block a rebuild.
+A manually constructed `HostfxrHost` used for development loads the backend from a private copy of its folder, not the build output directly, so `dotnet build` is never blocked by the running app: the runtime keeps the files it loaded open, and on Windows a loaded assembly cannot be overwritten, so running straight from the build output would block a rebuild. The sidecar host does not need this: see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host) above for how it avoids the same problem a different way.
 
-- Each start (for the sidecar host, each restart) copies the whole folder (subfolders such as `runtimes/` included) to a new folder named `tauri-plugin-dotnet-shadow-<pid>-<time>-<n>` in the system temp directory. Copying the 18 files of the sample's `bin/Debug` folder took 14 to 18 milliseconds. A file a build is writing at that moment is retried for up to three seconds.
+- Each start copies the whole folder (subfolders such as `runtimes/` included) to a new folder named `tauri-plugin-dotnet-shadow-<pid>-<time>-<n>` in the system temp directory. Copying the 18 files of the sample's `bin/Debug` folder took 14 to 18 milliseconds. A file a build is writing at that moment is retried for up to three seconds.
 - The copies of earlier runs are removed at the next start, but only if they are older than a minute and their process has ended (on Windows, a copy with an assembly that is still loaded is left alone; on Linux the process id is looked up in `/proc`; elsewhere only copies older than a day are removed). Copies of running apps, such as a second app in development, are kept. The last copy stays after the app ends, until the next start.
 - `Assembly.Location` points into the copy, not into your `bin` folder - which is also what lets a native dependency (a `runtimes/<rid>/native/` dll) resolve normally, and lets a debugger's source paths bind normally, the same as loading straight from `bin` would.
-- `HostfxrHost`'s own copy is controlled by `HostfxrOptions`: on in **debug builds** of the app by default, off in release; `.shadow_copy(true)` or `.shadow_copy(false)` overrides that, and it does not apply to an [embedded](#optional-embed-the-backend-in-the-executable) backend. The sidecar host always does this; there is no setting to turn it off. Note that neither host restarts itself on a Rust-side change - `HostfxrHost` also never restarts itself on a rebuild of the backend, unlike the sidecar host, which does that on its own.
+- Controlled by `HostfxrOptions`: on in **debug builds** of the app by default, off in release; `.shadow_copy(true)` or `.shadow_copy(false)` overrides that, and it does not apply to an [embedded](#optional-embed-the-backend-in-the-executable) backend. Note that `HostfxrHost` never restarts itself on a rebuild of the backend, unlike the sidecar host, which does that on its own.
 
 ### Optional: embed the backend in the executable
 
@@ -378,7 +376,7 @@ What you need to know:
 
 ### Seeing the Rust plugin's own logs
 
-The Rust side of `tauri-plugin-dotnet` logs through the standard `log` crate, the same way Tauri itself and every other Tauri plugin does - sidecar restarts and their shadow-copy timing, `HostInitFailed`/`RuntimeMissing` details, and so on. A fresh `npm create tauri-app` scaffold has no logger installed at all, so none of this prints anywhere (Tauri's own internal logs included) until the app wires one up itself; `log`'s macros are silent no-ops without one, by design - no library, this one included, is allowed to install a logger for you, since only one can exist per process.
+The Rust side of `tauri-plugin-dotnet` logs through the standard `log` crate, the same way Tauri itself and every other Tauri plugin does - the sidecar starting `dotnet watch` and connecting, its restarts, `HostInitFailed`/`RuntimeMissing` details, and so on. A fresh `npm create tauri-app` scaffold has no logger installed at all, so none of this prints anywhere (Tauri's own internal logs included) until the app wires one up itself; `log`'s macros are silent no-ops without one, by design - no library, this one included, is allowed to install a logger for you, since only one can exist per process.
 
 [`tauri-plugin-log`](https://github.com/tauri-apps/tauri-plugin-log) is the easiest way to get one. Its defaults already print to this same terminal and write a file under the OS log directory - nothing extra to configure:
 
@@ -386,7 +384,7 @@ The Rust side of `tauri-plugin-dotnet` logs through the standard `log` crate, th
 tauri::Builder::default()
     // Register first: its setup() installs the global `log` logger that every later plugin's own
     // log::info!/debug!/etc. calls write through. Registered after tauri_plugin_dotnet instead, its
-    // earliest setup-time log line (the sidecar's initial shadow copy) would already be missed.
+    // earliest setup-time log line (the sidecar starting dotnet watch) would already be missed.
     .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Debug).build())
     .plugin(tauri_plugin_dotnet::init_with(|app| {
         tauri_plugin_dotnet::any_backend_host!(app, "MyApp.Backend")
@@ -395,7 +393,7 @@ tauri::Builder::default()
     .expect("error while running tauri application");
 ```
 
-(`cargo add tauri-plugin-log log`.) `Debug` is worth it during development - it also surfaces the sidecar's shadow-copy timing; `Info` alone still shows restarts and errors. See the [sample app](#sample-app)'s own `lib.rs` for this wired up.
+(`cargo add tauri-plugin-log log`.) `Debug` is worth it during development - it also surfaces which `dotnet watch`/wrapper project the sidecar starts; `Info` alone still shows connects, restarts and errors. See the [sample app](#sample-app)'s own `lib.rs` for this wired up.
 
 ### Logging to a file
 
@@ -454,7 +452,7 @@ This is the embedded mode. If your backend has only managed dependencies and you
 - **One runtime per process, and no isolation.** A crash or stack overflow in C# takes the app down with it.
 - **Windows only so far.** The runtime discovery has Linux and macOS paths, but none of it has been run there.
 - **Release bundling is manual.** You add the `bundle.resources` entry yourself (see [Shipping your app](#shipping-your-app)); nothing configures it for you. Only Windows installers have been tried.
-- **A C# rebuild restarts the sidecar process, not the backend in-process.** There is no in-process hot reload; a call made mid-restart rejects with `HostRestarting` and can be retried (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
+- **Most C# edits restart the sidecar process.** A method-body-only edit hot-reloads in place with no restart at all; anything else (a new or changed method, a new type) restarts the process once it compiles. A call made while it is disconnected rejects with `HostSidecarUnavailable` and can be retried (see [Development: the dev-only sidecar host](#development-the-dev-only-sidecar-host)).
 - The dispatcher uses reflection, so backends cannot be NativeAOT-compiled.
 
 ## Sample app

@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 
-namespace Tauri.Plugin.DotNet.SidecarHost;
+namespace Tauri.Plugin.DotNet.Hosting.Sidecar;
 
 /// <summary>
 /// The framed connection to the Rust plugin: a 4-byte little-endian length prefix followed by UTF-8

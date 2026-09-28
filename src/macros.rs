@@ -181,9 +181,13 @@ macro_rules! __tdn_backend_host {
   ($app:expr, $project:literal, $assembly:literal, $tfm:literal) => {{
     #[cfg(debug_assertions)]
     fn __tauri_plugin_dotnet_host<R: ::tauri::Runtime>(_app: &::tauri::AppHandle<R>) -> $crate::SidecarHost {
-      $crate::SidecarHost::new($crate::SidecarOptions::new(::std::path::PathBuf::from($crate::__tdn_debug_dll!(
-        $project, $assembly, $tfm
-      ))))
+      $crate::SidecarHost::new(
+        $crate::SidecarOptions::new(
+          ::std::path::PathBuf::from($crate::__tdn_debug_csproj!($project, $assembly, $tfm)),
+          $assembly,
+        )
+        .tfm($tfm),
+      )
     }
 
     #[cfg(not(debug_assertions))]
@@ -229,6 +233,16 @@ macro_rules! __tdn_debug_dll {
       $assembly,
       ".dll"
     )
+  };
+}
+
+/// The backend's own project file, as an absolute path in the calling crate. The `.csproj` file name
+/// follows the project folder, per .NET convention, regardless of `$assembly`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tdn_debug_csproj {
+  ($project:literal, $assembly:literal, $tfm:literal) => {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../src-dotnet/", $project, "/", $project, ".csproj")
   };
 }
 

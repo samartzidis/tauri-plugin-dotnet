@@ -9,8 +9,7 @@
     <!--
       Matches what Tauri.Plugin.DotNet.props sets for a real backend project: a private copy of
       Tauri.Plugin.DotNet.dll (and its own dependencies) next to this project's own output, and a
-      deps.json/runtimeconfig.json usable for dynamic loading - exactly what
-      Tauri.Plugin.DotNet.SidecarHost's BackendAssemblyResolver is meant to resolve against.
+      deps.json/runtimeconfig.json - the same layout any real consumer backend has.
     -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>

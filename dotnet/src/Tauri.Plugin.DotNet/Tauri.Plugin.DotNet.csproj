@@ -28,7 +28,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Tauri.Plugin.DotNet.Tests" />
-    <InternalsVisibleTo Include="Tauri.Plugin.DotNet.SidecarHost" />
   </ItemGroup>
 
   <!-- Pack the MSBuild .props and .targets files (auto-imported by NuGet consumers) -->
@@ -54,20 +53,6 @@
     <ItemGroup>
       <_GeneratorFiles Include="$(BaseIntermediateOutputPath)generator-publish\**\*" />
       <None Include="@(_GeneratorFiles)" Pack="true" PackagePath="tools\net8.0\%(RecursiveDir)" />
-    </ItemGroup>
-  </Target>
-
-  <!--
-    Same idea as PublishGeneratorForPack, for the dev-only sidecar-runner tool
-    (Tauri.Plugin.DotNet.SidecarHost). Published into the same tools\net8.0\ folder; its filenames
-    don't collide with the generator's.
-  -->
-  <Target Name="PublishSidecarHostForPack" BeforeTargets="_GetPackageFiles" Condition="'$(NoBuild)' != 'true'">
-    <RemoveDir Directories="$(BaseIntermediateOutputPath)sidecarhost-publish" />
-    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\Tauri.Plugin.DotNet.SidecarHost\Tauri.Plugin.DotNet.SidecarHost.csproj&quot; -c $(Configuration) -o &quot;$(BaseIntermediateOutputPath)sidecarhost-publish&quot;" />
-    <ItemGroup>
-      <_SidecarHostFiles Include="$(BaseIntermediateOutputPath)sidecarhost-publish\**\*" />
-      <None Include="@(_SidecarHostFiles)" Pack="true" PackagePath="tools\net8.0\%(RecursiveDir)" />
     </ItemGroup>
   </Target>
 
