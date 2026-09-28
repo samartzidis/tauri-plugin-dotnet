@@ -7,10 +7,10 @@ edition = "2021"
 rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/samartzidis/tauri-plugin-dotnet"
-readme = "README.md"
+readme = "README.package.md"
 keywords = ["tauri", "dotnet", "csharp", "plugin", "rpc"]
 categories = ["gui"]
-exclude = ["/dotnet", "/samples", "/examples", "/dist-js", "/guest-js", "/node_modules", "/.memory", "/.vscode", "/.github", "/scripts", "/docs", "CLAUDE.md", "AGENTS.md", ".gitignore", "*.code-workspace"]
+exclude = ["/dotnet", "/samples", "/examples", "/dist-js", "/guest-js", "/node_modules", "/.memory", "/.vscode", "/.github", "/scripts", "/docs", "CLAUDE.md", "AGENTS.md", ".gitignore", "*.code-workspace", "README.md"]
 links = "tauri-plugin-dotnet"
 
 [dependencies]
