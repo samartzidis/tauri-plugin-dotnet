@@ -1,6 +1,6 @@
 # tauri-plugin-dotnet
 
-![alt text](docs/logo.png)
+![alt text](https://raw.githubusercontent.com/samartzidis/tauri-plugin-dotnet/main/docs/logo.png)
 
 Write your Tauri app's backend in .NET. Mark C# classes with `[BridgeService]`, run `dotnet build`, and call them from TypeScript through generated, fully typed bindings, with your frontend still running inside Tauri and using its plugins, bundler and updater.
 
