@@ -150,7 +150,7 @@ Arguments, results and event payloads travel as JSON (`System.Text.Json`, camelC
 |`KeyValuePair<K, V>`|`{ key: K; value: V }`|
 |tuples, `(int, string)` or `Tuple<int, string>`|`[number, string]`|
 |`JsonElement`, `JsonNode` (any JSON)|`unknown`|
-|`T?`|\`T|
+|`T?`|`T \| null`|
 |enums|a numeric TypeScript `enum`; with `JsonStringEnumConverter`, a string enum (see Converters below)|
 |classes and records from your own assemblies|an `interface`; a base class becomes `extends`|
 |generic classes such as `Page<T>`|`interface Page<T>`, used as `Page<Person>`|
@@ -313,7 +313,7 @@ In a debug build, `backend!`/`any_backend_host!` run the backend as a separate c
 
 - **A small generated wrapper project, not the backend directly.** `dotnet watch` only rebuilds and watches what is in the project graph it runs, so the plugin generates a tiny throwaway console project next to the backend (under its `obj/` folder) with a real `ProjectReference` to it, purely so `dotnet watch` sees the backend's own source. The wrapper's only code is one line calling into the plugin library's `SidecarRunner`.
 - **`dotnet watch` owns the process from there.** It applies a method-body-only edit in place with no restart at all (its own Hot Reload); anything else - a new or changed method, a new type - restarts the process, but only once the change actually compiles. A change that does not compile leaves the previous, working process running untouched, reporting the error in its own console output instead.
-- **No file lock to work around**, for a different reason than a shadow copy: the backend's compiled output lands in the *wrapper's own* build folder via the ordinary `ProjectReference` copy, a separate file from the backend project's own output, so `dotnet build` never has to overwrite anything the running sidecar has open.
+- **No file lock to work around.** The backend's compiled output lands in the *wrapper's own* build folder via the ordinary `ProjectReference` copy, a separate file from the backend project's own output, so `dotnet build` never has to overwrite anything the running sidecar has open.
 - **In flight when it happens?** A call made while the sidecar is disconnected - mid-restart, or after a genuine crash, deliberately not distinguished - fails immediately with `HostSidecarUnavailable`. Retrying once it has reconnected works normally.
 - This only runs in development. A release build loads the backend inside the app itself through `HostfxrHost`, exactly as described in [Hosting](#hosting-net-runs-inside-the-tauri-process), which is also what an app gets if it constructs `HostfxrHost` directly instead of using `backend!`/`any_backend_host!`.
 
