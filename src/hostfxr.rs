@@ -32,7 +32,6 @@ use crate::{
   bundle,
   error::BridgeError,
   host::{error_response, Completion, DotNetHost, EventSink, OnStartError, STOPPED},
-  shadow,
 };
 
 /// Error type used for everything that goes wrong while bringing the runtime up, except a missing runtime.
@@ -108,7 +107,6 @@ enum Source {
 pub struct HostfxrOptions {
   source: Source,
   dotnet_root: Option<PathBuf>,
-  shadow_copy: bool,
   shutdown_timeout: Duration,
   on_start_error: OnStartError,
 }
@@ -118,13 +116,12 @@ impl HostfxrOptions {
   /// `.runtimeconfig.json` and `.deps.json` must sit next to it, which is what building with
   /// `<EnableDynamicLoading>true</EnableDynamicLoading>` produces.
   ///
-  /// In debug builds the backend is loaded from a private copy of its folder, see
-  /// [`shadow_copy`](Self::shadow_copy).
+  /// The backend is loaded from where it is, so the running app holds its files open: on Windows
+  /// `dotnet build` cannot replace them until the app has exited.
   pub fn new(assembly_path: impl Into<PathBuf>) -> Self {
     Self {
       source: Source::Path(assembly_path.into()),
       dotnet_root: None,
-      shadow_copy: cfg!(debug_assertions),
       shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
       on_start_error: OnStartError::default(),
     }
@@ -149,25 +146,6 @@ impl HostfxrOptions {
     self
   }
 
-  /// Whether to load a copy of the backend's folder instead of the folder itself. The default is
-  /// on in debug builds and off in release builds.
-  ///
-  /// The runtime keeps the files it loaded open, so while the app runs from the build output,
-  /// `dotnet build` cannot replace the backend (on Windows a loaded assembly cannot be overwritten).
-  /// With a copy, the build output stays free: a rebuild always works, and the app picks up the new
-  /// build the next time it restarts. `HostfxrHost` never restarts itself, though - an app that stays
-  /// on it for development instead of [`SidecarHost`](crate::SidecarHost) (used automatically by
-  /// [`backend!`](crate::backend!)/[`any_backend_host!`](crate::any_backend_host!) in a debug build)
-  /// needs its own way to notice a rebuild and restart `tauri dev`.
-  ///
-  /// Each start copies the folder to the system temp directory (a few milliseconds for a typical
-  /// backend) and removes the copies of earlier runs that have ended. `Assembly.Location` points
-  /// into the copy. It has no effect on [`embedded`](Self::embedded) backends.
-  pub fn shadow_copy(mut self, enabled: bool) -> Self {
-    self.shadow_copy = enabled;
-    self
-  }
-
   /// Loads the backend from a bundle embedded in the executable, so no backend file has to ship
   /// next to it. Pass the bundle made by building the backend with `TauriDotNetEmbed=true`:
   ///
@@ -185,7 +163,6 @@ impl HostfxrOptions {
     Self {
       source: Source::Embedded(bundle),
       dotnet_root: None,
-      shadow_copy: false,
       shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
       on_start_error: OnStartError::default(),
     }
@@ -588,7 +565,7 @@ fn with_details(summary: String, details: &str, hint: &str) -> String {
 /// Loads the runtime, then the backend, and returns its entry points.
 fn load(options: &HostfxrOptions, events: EventSink) -> Result<Managed, BridgeError> {
   match &options.source {
-    Source::Path(path) => load_from_path(path, options.dotnet_root.as_deref(), options.shadow_copy, events),
+    Source::Path(path) => load_from_path(path, options.dotnet_root.as_deref(), events),
     Source::Embedded(bundle) => load_embedded(bundle, options.dotnet_root.as_deref(), events),
   }
 }
@@ -596,7 +573,6 @@ fn load(options: &HostfxrOptions, events: EventSink) -> Result<Managed, BridgeEr
 fn load_from_path(
   assembly_path: &Path,
   dotnet_root: Option<&Path>,
-  shadow_copy: bool,
   events: EventSink,
 ) -> Result<Managed, BridgeError> {
   let assembly = std::path::absolute(assembly_path)
@@ -618,31 +594,6 @@ fn load_from_path(
     )));
   }
   let framework = fs::read(&runtime_config).ok().and_then(|json| RequiredFramework::from_runtime_config(&json));
-
-  // Load a copy, so that the folder the build writes to is never held by this process.
-  let (assembly, runtime_config) = if shadow_copy {
-    log::debug!(
-      "tauri-plugin-dotnet: copying the .NET backend from {} to a temporary folder",
-      assembly.parent().unwrap_or(&assembly).display()
-    );
-    let started = std::time::Instant::now();
-    let copy = shadow::create(&assembly).map_err(|e| {
-      init_error(format!(
-        "Failed to copy the .NET backend from {} to a temporary folder: {e}",
-        assembly.parent().unwrap_or(&assembly).display()
-      ))
-    })?;
-    log::info!(
-      "tauri-plugin-dotnet: loading a copy of the backend ({} files, {:.0?}) from {}",
-      copy.files,
-      started.elapsed(),
-      copy.folder.display()
-    );
-    let runtime_config = copy.assembly.with_extension("runtimeconfig.json");
-    (copy.assembly, runtime_config)
-  } else {
-    (assembly, runtime_config)
-  };
 
   let (hostfxr_path, dotnet_root) = locate_hostfxr(dotnet_root, framework.as_ref())?;
   log::debug!("tauri-plugin-dotnet: using hostfxr at {}", hostfxr_path.display());
@@ -1393,26 +1344,10 @@ mod tests {
   }
 
   #[test]
-  fn a_path_backend_is_copied_in_debug_builds_and_loaded_in_place_in_release_builds() {
-    assert_eq!(HostfxrOptions::new("Backend.dll").shadow_copy, cfg!(debug_assertions));
-  }
-
-  #[test]
-  fn the_shadow_copy_can_be_switched_either_way() {
-    assert!(HostfxrOptions::new("Backend.dll").shadow_copy(true).shadow_copy);
-    assert!(!HostfxrOptions::new("Backend.dll").shadow_copy(false).shadow_copy);
-  }
-
-  #[test]
-  fn an_embedded_backend_is_never_copied() {
-    assert!(!HostfxrOptions::embedded(b"bundle").shadow_copy);
-  }
-
-  #[test]
-  fn a_missing_backend_is_reported_at_its_own_path_before_anything_is_copied() {
+  fn a_missing_backend_is_reported_at_its_own_path() {
     use std::sync::Arc;
 
-    let host = HostfxrHost::new(HostfxrOptions::new("definitely/not/here/Backend.dll").shadow_copy(true));
+    let host = HostfxrHost::new(HostfxrOptions::new("definitely/not/here/Backend.dll"));
     let sink: EventSink = Arc::new(|_, _| {});
     let error = host.start(sink).unwrap_err();
 

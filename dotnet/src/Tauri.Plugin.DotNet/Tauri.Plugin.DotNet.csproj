@@ -11,7 +11,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>Tauri.Plugin.DotNet</PackageId>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Description>Typed RPC bridge between a Tauri frontend and .NET services, with auto-generated TypeScript bindings. Provides reflection-based method dispatch, cancellation support, and a .NET-to-JS event system.</Description>
     <Authors>George Samartzidis</Authors>
     <PackageTags>tauri;dotnet;bridge;typescript;bindings;rpc</PackageTags>

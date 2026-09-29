@@ -5,7 +5,7 @@ pub fn run() {
     // `log::info!`/`debug!`/etc. calls write through, tauri-plugin-dotnet's included - a plugin
     // registered before this one would have its early setup-time log lines silently dropped, since
     // the logger would not exist yet when they run. Defaults to stdout (this terminal) plus a file
-    // under the OS log directory; Debug here also surfaces the sidecar's shadow-copy timing.
+    // under the OS log directory.
     .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Debug).build())
     // Native dialogs come from Tauri's own plugin; no .NET wrapper is needed for them.
     .plugin(tauri_plugin_dialog::init())

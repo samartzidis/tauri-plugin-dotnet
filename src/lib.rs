@@ -17,7 +17,6 @@ mod error;
 mod host;
 mod hostfxr;
 mod macros;
-mod shadow;
 mod sidecar;
 mod start_error;
 

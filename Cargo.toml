@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-dotnet"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["George Samartzidis"]
 description = "Tauri plugin that connects the frontend to .NET services through a typed RPC bridge."
 edition = "2021"
@@ -23,8 +23,6 @@ log = "0.4"
 netcorehost = { version = "0.22", default-features = false, features = ["net8_0"] }
 # The dev-only sidecar host's local socket transport (named pipe on Windows, Unix domain socket elsewhere).
 interprocess = { version = "2", default-features = false, features = ["tokio"] }
-# The dev-only sidecar host's watcher for backend rebuilds.
-notify = "7"
 
 # The dialog shown when .NET cannot be started. The same rfd setup as tauri-plugin-dialog, so an app that uses both
 # builds it once.
