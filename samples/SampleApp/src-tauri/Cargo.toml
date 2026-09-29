@@ -28,3 +28,6 @@ custom-protocol = ["tauri/custom-protocol"]
 # `dotnet build src-dotnet/SampleApp.Backend -p:TauriDotNetEmbed=true` (add `-c Release` for a release build), which
 # writes SampleApp.Backend.tdnbundle into the build output folder that src/lib.rs includes.
 embedded-backend = []
+# Loads the backend in-process from files even in a debug build (src-dotnet/SampleApp.Backend/bin/Debug), instead of
+# the dev-only sidecar under `dotnet watch`. Ignored when `embedded-backend` is on.
+path-backend = []

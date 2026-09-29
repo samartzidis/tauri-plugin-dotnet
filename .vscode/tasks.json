@@ -85,26 +85,28 @@
             "dependsOn": ["sample: build backend"],
             "problemMatcher": "$tsc"
         },
+        // A plain debug `cargo run` would start the dev-only sidecar under `dotnet watch` (use "sample: tauri dev"
+        // for that), so these force the in-process host with the `path-backend` feature: the Debug backend,
+        // loaded from bin\Debug. Stop the app before rebuilding the backend.
         {
-            // `custom-protocol` embeds the frontend; a plain cargo build would load devUrl instead.
-            "label": "sample: build app",
+            "label": "sample: build app (path backend)",
             "type": "shell",
-            "command": "cargo build --features custom-protocol",
+            "command": "cargo build --features custom-protocol,path-backend",
             "options": { "cwd": "${workspaceFolder}/samples/SampleApp/src-tauri" },
             "dependsOn": ["sample: build frontend"],
             "problemMatcher": "$rustc",
-            "group": { "kind": "build", "isDefault": true }
+            "group": "build"
         },
         {
-            "label": "sample: run app",
+            "label": "sample: run app (path backend)",
             "type": "shell",
-            "command": "cargo run --features custom-protocol",
+            "command": "cargo run --features custom-protocol,path-backend",
             "options": { "cwd": "${workspaceFolder}/samples/SampleApp/src-tauri" },
             "dependsOn": ["sample: build frontend"],
             "problemMatcher": "$rustc",
             "presentation": { "reveal": "always", "panel": "dedicated" }
         },
-        // ---- Sample app with the backend embedded in the executable (optional; see the README) ----
+        // ---- Sample app with the backend embedded in the executable (in-process; see the README) ----
         {
             // Also writes SampleApp.Backend.tdnbundle into bin\Debug\net8.0, which the `embedded-backend` feature includes.
             "label": "sample: build backend (embedded bundle)",
@@ -128,7 +130,7 @@
             "options": { "cwd": "${workspaceFolder}/samples/SampleApp/src-tauri" },
             "dependsOn": ["sample: build frontend (embedded)"],
             "problemMatcher": "$rustc",
-            "group": "build"
+            "group": { "kind": "build", "isDefault": true }
         },
         {
             "label": "sample: run app (embedded backend)",

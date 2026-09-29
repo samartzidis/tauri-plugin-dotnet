@@ -14,8 +14,18 @@ pub fn run() {
     // `bundle.resources`) in release. With it, the backend travels inside this executable instead
     // (`dotnet build -p:TauriDotNetEmbed=true`), always in-process.
     // An app that uses only files can write `.plugin(tauri_plugin_dotnet::backend!("MyApp.Backend"))`.
+    // `path-backend` (ignored when `embedded-backend` is on) forces an in-process host that loads the backend
+    // from files even in a debug build: `bin/Debug` here, so no `dotnet watch`, and a rebuild is blocked while
+    // the app runs.
     .plugin(tauri_plugin_dotnet::init_with(|app| {
-      tauri_plugin_dotnet::any_backend_host!(app, "SampleApp.Backend")
+      #[cfg(all(feature = "path-backend", not(feature = "embedded-backend")))]
+      {
+        tauri_plugin_dotnet::HostfxrHost::new(tauri_plugin_dotnet::backend_options!(app, "SampleApp.Backend"))
+      }
+      #[cfg(not(all(feature = "path-backend", not(feature = "embedded-backend"))))]
+      {
+        tauri_plugin_dotnet::any_backend_host!(app, "SampleApp.Backend")
+      }
     }))
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
