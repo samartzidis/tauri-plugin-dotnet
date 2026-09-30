@@ -70,7 +70,7 @@ impl Builder {
 /// ```ignore
 /// tauri::Builder::default()
 ///   .plugin(tauri_plugin_dotnet::init_with(|app| {
-///     HostfxrHost::new(tauri_plugin_dotnet::any_backend_options!(app, "MyApp.Backend"))
+///     HostfxrHost::new(tauri_plugin_dotnet::backend_options!(app, "MyApp.Backend"))
 ///   }))
 /// ```
 pub fn init_with<R, H, F>(make_host: F) -> TauriPlugin<R>

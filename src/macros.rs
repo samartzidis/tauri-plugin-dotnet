@@ -30,8 +30,9 @@
 /// In a debug build, this runs the backend as a separate dev-only sidecar process
 /// ([`SidecarHost`](crate::SidecarHost)): a rebuild restarts just that process, not the whole app, so
 /// `tauri dev` never reloads the frontend on a C# change. A release build loads it in-process
-/// ([`HostfxrHost`](crate::HostfxrHost)) exactly as before. For the embedded mode, switching between
-/// the two ([`any_backend_host!`]), or a different layout, use [`init_with`](crate::init_with) directly.
+/// ([`HostfxrHost`](crate::HostfxrHost)) exactly as before. For the embedded mode, choosing a mode
+/// yourself ([`sidecar_backend_host!`], [`path_backend_host!`], [`embedded_backend_host!`]), or a different
+/// layout, use [`init_with`](crate::init_with) directly.
 #[macro_export]
 macro_rules! backend {
   ($($args:tt)+) => {
@@ -55,6 +56,21 @@ macro_rules! backend_options {
   };
 }
 
+/// A [`HostfxrHost`](crate::HostfxrHost) that always loads the backend from files in-process, in debug
+/// builds too (no dev-only sidecar, so no `dotnet watch`, and a rebuild is blocked while the app runs).
+/// Shorthand for `HostfxrHost::new(backend_options!(..))`, for an app that wants the in-process host
+/// regardless of the build profile (see also [`sidecar_backend_host!`] and [`embedded_backend_host!`]):
+///
+/// ```ignore
+/// tauri_plugin_dotnet::init_with(|app| tauri_plugin_dotnet::path_backend_host!(app, "MyApp.Backend"))
+/// ```
+#[macro_export]
+macro_rules! path_backend_host {
+  ($app:expr, $($args:tt)+) => {
+    $crate::HostfxrHost::new($crate::backend_options!($app, $($args)+))
+  };
+}
+
 /// [`HostfxrOptions`](crate::HostfxrOptions) that embed the bundle of the backend project `$project`
 /// (`dotnet build -p:TauriDotNetEmbed=true`) from the Debug or Release build output, matching the cargo
 /// profile. Fails to compile until that bundle exists, so keep it behind a Cargo feature.
@@ -69,58 +85,36 @@ macro_rules! embedded_backend_options {
   };
 }
 
-/// [`embedded_backend_options!`] when the caller's own Cargo feature named exactly `embedded-backend` is
-/// on, [`backend_options!`] otherwise. For an app that switches between the two; an app that uses one
-/// mode should call that macro directly. The feature must be declared in the caller's `[features]` table
-/// even while it is off, or Cargo's `unexpected_cfgs` lint warns.
-///
-/// This returns [`HostfxrOptions`](crate::HostfxrOptions) either way, for composing a [`HostfxrHost`](crate::HostfxrHost)
-/// by hand; it does not get the dev-only sidecar host, since embedded mode never uses it (there is no
-/// dev-loop story for an embedded bundle) and picking `HostfxrHost::new(...)` here is precisely what
-/// says "always in-process" for the non-embedded case too. Use [`any_backend_host!`] instead to also
-/// get the sidecar host in debug builds.
+/// A [`HostfxrHost`](crate::HostfxrHost) that runs the embedded bundle of the backend project `$project`
+/// in-process ([`embedded_backend_options!`] wrapped in the host). Takes the same `app` argument as the
+/// other `*_backend_host!` macros so the modes can be swapped in a `cfg`, but does not use it. Fails to
+/// compile until the matching bundle exists, so keep it behind a Cargo feature.
 ///
 /// ```ignore
-/// tauri_plugin_dotnet::init_with(|app| HostfxrHost::new(tauri_plugin_dotnet::any_backend_options!(app, "MyApp.Backend")))
+/// tauri_plugin_dotnet::init_with(|app| tauri_plugin_dotnet::embedded_backend_host!(app, "MyApp.Backend"))
 /// ```
 #[macro_export]
-macro_rules! any_backend_options {
+macro_rules! embedded_backend_host {
   ($app:expr, $($args:tt)+) => {{
-    #[cfg(feature = "embedded-backend")]
-    {
-      // The embedded form needs no app handle; touch it so the caller's variable is not unused.
-      let _ = &$app;
-      $crate::embedded_backend_options!($($args)+)
-    }
-    #[cfg(not(feature = "embedded-backend"))]
-    {
-      $crate::backend_options!($app, $($args)+)
-    }
+    let _ = &$app;
+    $crate::HostfxrHost::new($crate::embedded_backend_options!($($args)+))
   }};
 }
 
-/// Like [`any_backend_options!`], but returns a fully constructed host instead of options for the
-/// caller to wrap: [`embedded_backend_options!`] wrapped in [`HostfxrHost`](crate::HostfxrHost) when the
-/// caller's `embedded-backend` feature is on, otherwise the same host [`backend!`] builds (a
-/// [`SidecarHost`](crate::SidecarHost) in debug, [`HostfxrHost`](crate::HostfxrHost) in release). Use this,
-/// rather than `HostfxrHost::new(any_backend_options!(...))`, to get the dev-only sidecar host on an app
-/// that also switches into embedded mode:
+/// A [`SidecarHost`](crate::SidecarHost): the dev-only host that runs the backend as a separate child
+/// process under `dotnet watch` (see [`backend!`]). Meant for development: it needs the .NET SDK and the
+/// backend's source project, at the path they had when the app was compiled. It works in a release build on
+/// the machine that built it, but on any other machine it fails to start (the usual on-start-error
+/// dialog). Takes the same `app` argument as the other `*_backend_host!` macros, but does not use it.
 ///
 /// ```ignore
-/// tauri_plugin_dotnet::init_with(|app| tauri_plugin_dotnet::any_backend_host!(app, "MyApp.Backend"))
+/// tauri_plugin_dotnet::init_with(|app| tauri_plugin_dotnet::sidecar_backend_host!(app, "MyApp.Backend"))
 /// ```
 #[macro_export]
-macro_rules! any_backend_host {
+macro_rules! sidecar_backend_host {
   ($app:expr, $($args:tt)+) => {{
-    #[cfg(feature = "embedded-backend")]
-    {
-      let _ = &$app;
-      $crate::HostfxrHost::new($crate::embedded_backend_options!($($args)+))
-    }
-    #[cfg(not(feature = "embedded-backend"))]
-    {
-      $crate::__tdn_args!(__tdn_backend_host ($app,) $($args)+)
-    }
+    let _ = &$app;
+    $crate::__tdn_args!(__tdn_sidecar_host () $($args)+)
   }};
 }
 
@@ -172,22 +166,31 @@ macro_rules! __tdn_backend_options {
   }};
 }
 
-/// A [`SidecarHost`](crate::SidecarHost) from the debug build output in a debug build, a
-/// [`HostfxrHost`](crate::HostfxrHost) via [`__tdn_backend_options!`] otherwise. Backs [`backend!`] and
-/// the non-embedded branch of [`any_backend_host!`].
+/// A [`SidecarHost`](crate::SidecarHost) for the backend's project file. Backs [`sidecar_backend_host!`]
+/// and the debug half of [`__tdn_backend_host!`].
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tdn_sidecar_host {
+  ($project:literal, $assembly:literal, $tfm:literal) => {
+    $crate::SidecarHost::new(
+      $crate::SidecarOptions::new(
+        ::std::path::PathBuf::from($crate::__tdn_debug_csproj!($project, $assembly, $tfm)),
+        $assembly,
+      )
+      .tfm($tfm),
+    )
+  };
+}
+
+/// A [`SidecarHost`](crate::SidecarHost) in a debug build, a [`HostfxrHost`](crate::HostfxrHost) via
+/// [`__tdn_backend_options!`] otherwise. Backs [`backend!`].
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __tdn_backend_host {
   ($app:expr, $project:literal, $assembly:literal, $tfm:literal) => {{
     #[cfg(debug_assertions)]
     fn __tauri_plugin_dotnet_host<R: ::tauri::Runtime>(_app: &::tauri::AppHandle<R>) -> $crate::SidecarHost {
-      $crate::SidecarHost::new(
-        $crate::SidecarOptions::new(
-          ::std::path::PathBuf::from($crate::__tdn_debug_csproj!($project, $assembly, $tfm)),
-          $assembly,
-        )
-        .tfm($tfm),
-      )
+      $crate::__tdn_sidecar_host!($project, $assembly, $tfm)
     }
 
     #[cfg(not(debug_assertions))]

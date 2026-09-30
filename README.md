@@ -210,7 +210,7 @@ var path = await dispatcher.GetFrontend<IFrontend>(windowLabel).PickFile("Choose
 
 `HostfxrHost` loads the .NET runtime into the app through `hostfxr` and calls `[UnmanagedCallersOnly]` entry points in `Tauri.Plugin.DotNet.Hosting.NativeHost`. Only pointers and lengths cross the boundary; each side copies what it receives, so neither frees the other's memory. Calls return immediately and complete through a callback, so a slow C# method never blocks Tauri's threads.
 
-The backend runs one of three ways. `backend!`/`any_backend_host!` pick between the first two automatically, by build profile; embedding is always opt-in.
+The backend runs one of three ways. `backend!` picks between the first two automatically, by build profile; embedding is always opt-in. To choose a mode yourself, use `sidecar_backend_host!`, `path_backend_host!` or `embedded_backend_host!` inside `init_with`. `sidecar_backend_host!` also compiles in a release build, but it needs the .NET SDK and the backend's source at run time, so it only works on the machine that built it (elsewhere the app shows the start-error dialog).
 
 
 |Mode|Process|Loaded from|When|
@@ -309,13 +309,13 @@ public sealed class Backend : IBridgeBackend
 
 ### Development: the dev-only sidecar host
 
-In a debug build, `backend!`/`any_backend_host!` run the backend as a separate child process (`SidecarHost`) instead of inside the app, managed by `dotnet watch`, and talk to it over a local socket using the same wire protocol `HostfxrHost` uses. This is what [Changing C# while `tauri dev` runs](#getting-started) relies on:
+In a debug build, `backend!` (or `sidecar_backend_host!`) runs the backend as a separate child process (`SidecarHost`) instead of inside the app, managed by `dotnet watch`, and talks to it over a local socket using the same wire protocol `HostfxrHost` uses. This is what [Changing C# while `tauri dev` runs](#getting-started) relies on:
 
 - **A small generated wrapper project, not the backend directly.** `dotnet watch` only rebuilds and watches what is in the project graph it runs, so the plugin generates a tiny throwaway console project next to the backend (under its `obj/` folder) with a real `ProjectReference` to it, purely so `dotnet watch` sees the backend's own source. The wrapper's only code is one line calling into the plugin library's `SidecarRunner`.
 - **`dotnet watch` owns the process from there.** It applies a method-body-only edit in place with no restart at all (its own Hot Reload); anything else - a new or changed method, a new type - restarts the process, but only once the change actually compiles. A change that does not compile leaves the previous, working process running untouched, reporting the error in its own console output instead.
 - **No file lock to work around.** The backend's compiled output lands in the *wrapper's own* build folder via the ordinary `ProjectReference` copy, a separate file from the backend project's own output, so `dotnet build` never has to overwrite anything the running sidecar has open.
 - **In flight when it happens?** A call made while the sidecar is disconnected - mid-restart, or after a genuine crash, deliberately not distinguished - fails immediately with `HostSidecarUnavailable`. Retrying once it has reconnected works normally.
-- This only runs in development. A release build loads the backend inside the app itself through `HostfxrHost`, exactly as described in [Hosting](#hosting-net-runs-inside-the-tauri-process), which is also what an app gets if it constructs `HostfxrHost` directly instead of using `backend!`/`any_backend_host!`. That app loads the backend from its build output, so `dotnet build` cannot replace the backend while the app is running (on Windows a loaded assembly cannot be overwritten), and it does not restart itself on a rebuild.
+- `backend!` uses this only in development. A release build loads the backend inside the app itself through `HostfxrHost`, exactly as described in [Hosting](#hosting-net-runs-inside-the-tauri-process), which is also what an app gets if it constructs `HostfxrHost` directly or uses `path_backend_host!` instead of `backend!`. That app loads the backend from its build output, so `dotnet build` cannot replace the backend while the app is running (on Windows a loaded assembly cannot be overwritten), and it does not restart itself on a rebuild.
 
 ### Optional: embed the backend in the executable
 
@@ -338,7 +338,7 @@ By default the backend runs in path mode: a set of files next to the app. If you
 
    `embedded_backend_options!` picks the bundle for the current build profile (Debug or Release), assuming the same layout as `backend!` and taking the same `assembly` and `tfm` keys. Put this behind a Cargo feature (the sample calls it `embedded-backend`), because it fails to compile until the matching bundle exists. A release build of the app needs the Release bundle: it does not fall back to the Debug one.
 
-   To switch between files and embedding with that feature (as the sample does, to show both), use `any_backend_options!(app, "MyApp.Backend")` inside `init_with` instead. It picks the embedded form when your crate's own `embedded-backend` feature is on. The feature has to have exactly that name and be declared in your `[features]` table (`embedded-backend = []`) even while it is off, or Cargo's `unexpected_cfgs` lint warns.
+   For a ready-made host, `embedded_backend_host!(app, "MyApp.Backend")` is `HostfxrHost::new(embedded_backend_options!(..))`. To switch between files and embedding (as the sample does, to show both), put each mode's `*_backend_host!` macro (`sidecar_backend_host!`, `path_backend_host!`, `embedded_backend_host!`) behind your own `#[cfg(feature = "embedded-backend")]` blocks inside `init_with`. The feature must be declared in your `[features]` table (`embedded-backend = []`) even while it is off, or Cargo's `unexpected_cfgs` lint warns.
 
    If your layout differs, write it by hand. `include_bytes!` takes a fixed path, resolved relative to the file that contains it, so choose it by build profile:
 
@@ -377,9 +377,7 @@ tauri::Builder::default()
     // log::info!/debug!/etc. calls write through. Registered after tauri_plugin_dotnet instead, its
     // earliest setup-time log line (the sidecar starting dotnet watch) would already be missed.
     .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Debug).build())
-    .plugin(tauri_plugin_dotnet::init_with(|app| {
-        tauri_plugin_dotnet::any_backend_host!(app, "MyApp.Backend")
-    }))
+    .plugin(tauri_plugin_dotnet::backend!("MyApp.Backend"))
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 ```
@@ -435,7 +433,7 @@ This is the path mode, and what [Getting started](#getting-started) sets up. The
 
 ### Optional: a single executable
 
-This is the embedded mode. If your backend has only managed dependencies and you want no backend files on disk, embed it instead (see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)). Add `-p:TauriDotNetEmbed=true` to the backend build in `beforeBuildCommand` and build the app with your `embedded-backend` feature. That build writes into `src-tauri/backend` (`-o`), so the bundle is written there too and the release path in your `include_bytes!` is `../backend/MyApp.Backend.tdnbundle`. Drop the `backend/` mapping from `bundle.resources` when you embed, or the installer ships the backend files as well. It cannot carry native libraries, so a backend that uses SQLite, for example, has to use the default above.
+This is the embedded mode. If your backend has only managed dependencies and you want no backend files on disk, embed it instead (see [Optional: embed the backend in the executable](#optional-embed-the-backend-in-the-executable)). Build the backend with `-p:TauriDotNetEmbed=true` and build the app with your `embedded-backend` feature. `embedded_backend_options!` and `embedded_backend_host!` read the bundle from the backend's own `bin/Release/net8.0/` folder, so build it there, without `-o`: put `dotnet build src-dotnet/MyApp.Backend -c Release -p:TauriDotNetEmbed=true` in `beforeBuildCommand` in place of the `-o src-tauri/backend` build (with `-o`, the bundle is written into that folder instead, and the macros do not find it). Drop the `backend/` mapping from `bundle.resources` when you embed, or the installer ships the backend files as well. It cannot carry native libraries, so a backend that uses SQLite, for example, has to use the default above.
 
 ## Limitations
 

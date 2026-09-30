@@ -9,7 +9,7 @@
     2. Runs the binding generator against the consumer's compiled assembly.
     3. Creates the empty src-tauri\backend folder that Tauri requires to exist (see TauriDotNetResourceFolder).
 
-    The dev-only sidecar host (`backend!`/`any_backend_host!` in a debug build) needs no build-time step
+    The dev-only sidecar host (`backend!`/`sidecar_backend_host!` in a debug build) needs no build-time step
     from this file: it generates its own small wrapper project referencing the backend's .csproj directly
     and runs it under `dotnet watch` (see src/sidecar.rs and src/sidecar/wrapper.rs in the crate).
 

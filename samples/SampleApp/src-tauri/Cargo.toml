@@ -29,5 +29,10 @@ custom-protocol = ["tauri/custom-protocol"]
 # writes SampleApp.Backend.tdnbundle into the build output folder that src/lib.rs includes.
 embedded-backend = []
 # Loads the backend in-process from files even in a debug build (src-dotnet/SampleApp.Backend/bin/Debug), instead of
-# the dev-only sidecar under `dotnet watch`. Ignored when `embedded-backend` is on.
+# the dev-only sidecar under `dotnet watch`.
 path-backend = []
+# Runs the backend as the dev-only sidecar under `dotnet watch` even in a release build (it needs the .NET SDK and the
+# backend's source at run time, so only on the machine that built it).
+sidecar-backend = []
+# The three backend features are mutually exclusive (a compile error otherwise). With none, a debug build uses the
+# sidecar and a release build loads the backend in-process from `resource_dir()/dotnet/`.
