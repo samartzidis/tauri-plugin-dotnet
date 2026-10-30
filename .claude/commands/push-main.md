@@ -3,7 +3,7 @@ description: Push dev to main - squash-merge a dev -> main PR whose notes summar
 disable-model-invocation: true
 ---
 
-Bring `dev` to `main`: open a PR from `dev` into `main` with short notes summarising the new commits, squash-merge it, and resync `dev`. Releasing is not part of this command: the `Build, Test & Publish` workflow only runs by hand (Run workflow), so the push to `main` starts nothing, and versions are neither checked nor changed here. The squash commits' bodies on `main` keep the notes of each push, so the notes written here matter. Follow these steps in order and stop at the first check that fails, saying why. Stay on `dev` the whole time and never delete it: the same flow runs again next time. Run every git and gh command with the Bash tool from the repository root.
+Bring `dev` to `main`: open a PR from `dev` into `main` with short notes summarising the new commits, squash-merge it, and resync `dev`. What the push to `main` triggers afterwards (the `Build, Test & Publish` workflow: a build, and a publish, paused for approval, when the version is new) is the workflow's business, not this command's: do not check or change versions. The workflow takes the release notes from the squash commits' bodies, so the notes written here matter. Follow these steps in order and stop at the first check that fails, saying why. Stay on `dev` the whole time and never delete it: the same flow runs again next time. Run every git and gh command with the Bash tool from the repository root.
 
 ## 1. Checks
 
@@ -38,7 +38,7 @@ BASE=$(git rev-list --first-parent --merges --parents dev | awk -v m="$M" '$3 ==
 Ask with the AskUserQuestion tool: one single-select question, header `Push main`, whose text gives the number of commits in the range and the last line of `git diff --stat origin/main..dev` (a diff compares content, so `origin/main..dev` is right here) and asks how to push. Options, in this order:
 
 - `Push as shown` (Recommended): "Create the PR and squash-merge it with these notes"; preview: the title, a blank line, then the notes.
-- `Push without notes`: "Same title, empty notes: this push leaves no notes on main"; preview: the title alone.
+- `Push without notes`: "Same title, empty notes: this push adds nothing to the next release's notes"; preview: the title alone.
 - `Cancel`: "Create nothing".
 
 The form also offers "Other", where the user types changes to the title or notes: apply them and ask again with the same question. Only `Push as shown` or `Push without notes` lets you continue (the latter makes the notes empty); `Cancel`, a dismissed form or anything unclear means stop without creating anything. If the tool is unavailable, show the same information as text and continue only on an explicit yes.
@@ -66,4 +66,4 @@ This records the squash commit in `dev`'s history without changing any file, and
 
 ## 6. Report
 
-The PR URL, the squash commit on `main`, and that `dev` is synced and checked out. Remind the user that nothing was released: that is the `Build, Test & Publish` workflow, run by hand from the Actions tab.
+The PR URL, the squash commit on `main`, the workflow run it started (`gh run list --branch main --limit 1`), and that `dev` is synced and checked out. If that run reaches the `Publish` job, tell the user it waits for their approval in the `publish` environment.

@@ -1,6 +1,18 @@
 name: Build, Test & Publish
 
+# Two ways in:
+#  - "Run workflow": build, test and pack, optionally publish by hand.
+#  - A push to main: build, test, pack and, if the csproj/Cargo.toml version
+#    has no release yet (no v<version> tag), publish it automatically (still
+#    paused for approval by the "publish" environment). The release notes are
+#    the message bodies of the commits on main since the previous release tag:
+#    each squash-merged dev -> main PR carries its notes there (see the
+#    /push-main command), so pushes that did not release still reach the next
+#    release's notes.
+
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       publish:
@@ -8,17 +20,81 @@ on:
         required: false
         type: boolean
         default: false
+      release_notes:
+        description: 'Release notes (used only when "publish" is checked). Empty = the commit message bodies since the previous release, else the version number.'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Check: decides what this run does. The csproj and Cargo.toml versions are
+  # the single source of truth - no tag or version is typed in by hand; the
+  # release tag is derived from them. Manual runs always build; "publish"
+  # follows the input. A push builds and publishes only when the version has
+  # no v<version> tag yet.
+  # ---------------------------------------------------------------------------
+  check:
+    runs-on: ubuntu-latest
+    name: Check version
+
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      build: ${{ steps.decide.outputs.build }}
+      publish: ${{ steps.decide.outputs.publish }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Decide
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj)
+          CRATE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/')
+          if [ -z "$CSPROJ_VERSION" ] || [ "$CSPROJ_VERSION" != "$CRATE_VERSION" ]; then
+            echo "csproj <Version>$CSPROJ_VERSION</Version> does not match Cargo.toml version \"$CRATE_VERSION\"" >&2
+            exit 1
+          fi
+          VERSION=$CSPROJ_VERSION
+          BUILD=true
+          PUBLISH=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            PUBLISH="$PUBLISH_INPUT"
+          elif gh api "repos/$REPO/git/refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already released - nothing to do."
+            BUILD=false
+          else
+            echo "v$VERSION has no release yet - building and publishing it."
+            PUBLISH=true
+          fi
+          {
+            echo "version=$VERSION"
+            echo "build=$BUILD"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
   # Test: builds (as a side effect) and runs .NET (library + generator) and
   # Rust unit tests. No separate "build" job: GitHub Actions jobs run on
   # isolated VMs, so a prior build job's output wouldn't be reused here anyway.
   # ---------------------------------------------------------------------------
   test:
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: windows-latest
     name: Test
 
@@ -38,17 +114,14 @@ jobs:
         run: cargo test
 
   # ---------------------------------------------------------------------------
-  # Pack: build the nupkg and the crate package. The csproj and Cargo.toml
-  # versions are the single source of truth - no tag or version is typed in
-  # by hand; the release tag (when publishing) is derived from them.
+  # Pack: build the nupkg and the crate package, with the version the check
+  # job read and verified.
   # ---------------------------------------------------------------------------
   pack:
-    needs: test
+    needs: [check, test]
+    if: needs.check.outputs.build == 'true'
     runs-on: windows-latest
     name: Pack
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -59,17 +132,17 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Read and verify version
-        id: version
+      - name: Fail if this version was already released
+        if: needs.check.outputs.publish == 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj)
-          CRATE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/')
-          if [ "$CSPROJ_VERSION" != "$CRATE_VERSION" ]; then
-            echo "csproj <Version>$CSPROJ_VERSION</Version> does not match Cargo.toml version \"$CRATE_VERSION\""
+          TAG="v${{ needs.check.outputs.version }}"
+          if gh api "repos/${{ github.repository }}/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists - bump the version in the csproj and Cargo.toml before publishing." >&2
             exit 1
           fi
-          echo "version=$CSPROJ_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Pack nupkg
         run: dotnet pack dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj -c Release -o artifacts
@@ -95,16 +168,19 @@ jobs:
   # ---------------------------------------------------------------------------
   # Publish: create the GitHub Release (tag derived from the version above,
   # created automatically since it doesn't exist yet), then push to nuget.org
-  # and crates.io via Trusted Publishing (OIDC) - only when the "publish"
-  # input is checked. Gated behind the "publish" environment - configure
-  # required reviewers on it under repo Settings > Environments so this job
-  # pauses for human approval before anything is pushed. The packed artifacts
-  # are already inspectable from the "pack" job's upload, so the reviewer can
-  # check them before approving.
+  # and crates.io via Trusted Publishing (OIDC) - only when the check job
+  # decided to publish (the "publish" input, or a push with a new version).
+  # Gated behind the "publish" environment - configure required reviewers on
+  # it under repo Settings > Environments so this job pauses for human
+  # approval before anything is pushed. The packed artifacts are already
+  # inspectable from the "pack" job's upload, so the reviewer can check them
+  # before approving. Release notes: the typed input of a manual run, else
+  # the message bodies of the commits since the previous release tag, else
+  # just the version number.
   # ---------------------------------------------------------------------------
   publish:
-    needs: pack
-    if: inputs.publish
+    needs: [check, pack]
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     name: Publish
     environment: publish
@@ -113,11 +189,14 @@ jobs:
       id-token: write   # required for both NuGet and crates.io Trusted Publishing (OIDC)
 
     env:
-      TAG: v${{ needs.pack.outputs.version }}
+      TAG: v${{ needs.check.outputs.version }}
 
     steps:
+      # Full history and tags, to find the previous release.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Download packages
         uses: actions/download-artifact@v8
@@ -125,13 +204,41 @@ jobs:
           name: packages
           path: dist
 
+      # The typed notes reach the script through env, never spliced into it.
+      - name: Release notes
+        id: notes
+        shell: bash
+        env:
+          TYPED: ${{ inputs.release_notes }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          if [ -n "$TYPED" ]; then
+            NOTES="$TYPED"
+          else
+            # Bodies (subject lines dropped) of the commits since the previous release tag, oldest
+            # first, blank runs squeezed; without a previous tag, just the latest commit's.
+            PREVIOUS=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)
+            if [ -n "$PREVIOUS" ]; then
+              BODIES=$(git log --reverse --first-parent --format='%b%n' "$PREVIOUS..HEAD")
+            else
+              BODIES=$(git log -1 --format='%b')
+            fi
+            NOTES=$(printf '%s\n' "$BODIES" | cat -s | sed '/./,$!d')
+          fi
+          [ -n "$NOTES" ] || NOTES="$VERSION"
+          {
+            echo 'notes<<END_OF_RELEASE_NOTES'
+            printf '%s\n' "$NOTES"
+            echo 'END_OF_RELEASE_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           name: Release ${{ env.TAG }}
           files: dist/*
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.notes }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
