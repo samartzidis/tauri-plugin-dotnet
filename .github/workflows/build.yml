@@ -63,8 +63,9 @@ jobs:
           REPO: ${{ github.repository }}
           PUBLISH_INPUT: ${{ inputs.publish }}
         run: |
-          CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj)
-          CRATE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/')
+          # tr: the files may have CRLF line endings, which must not end up in the version.
+          CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' dotnet/src/Tauri.Plugin.DotNet/Tauri.Plugin.DotNet.csproj | tr -d '\r')
+          CRATE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)"/\1/' | tr -d '\r')
           if [ -z "$CSPROJ_VERSION" ] || [ "$CSPROJ_VERSION" != "$CRATE_VERSION" ]; then
             echo "csproj <Version>$CSPROJ_VERSION</Version> does not match Cargo.toml version \"$CRATE_VERSION\"" >&2
             exit 1
